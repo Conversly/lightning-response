@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/cloudwego/eino/components/tool"
-	"github.com/cloudwego/eino/schema"
 	einoUtils "github.com/cloudwego/eino/components/tool/utils"
 	"go.uber.org/zap"
 
@@ -16,25 +15,21 @@ import (
 	internalUtils "github.com/Conversly/lightning-response/internal/utils"
 )
 
-// Global database and embedder references (set during initialization)
 var (
 	globalDB       *loaders.PostgresClient
 	globalEmbedder *embedder.GeminiEmbedder
 )
 
-// RAGToolRequest defines the input schema for the RAG tool
 type RAGToolRequest struct {
 	Query string `json:"query" jsonschema:"required,description=The search query to find relevant documents"`
 }
 
-// RAGToolResponse defines the output schema for the RAG tool
 type RAGToolResponse struct {
 	Content  string              `json:"content" jsonschema:"description=Retrieved document content"`
 	Sources  []RAGSourceDocument `json:"sources" jsonschema:"description=Source documents"`
 	DocCount int                 `json:"doc_count" jsonschema:"description=Number of documents retrieved"`
 }
 
-// RAGSourceDocument represents a single source document from RAG
 type RAGSourceDocument struct {
 	Title   string  `json:"title,omitempty"`
 	URL     string  `json:"url,omitempty"`
@@ -60,11 +55,11 @@ func CreateRAGToolFromRetriever(retriever rag.Retriever, chatbotID string, _ str
 		// Format documents into content and extract citations
 		var content strings.Builder
 		sources := make([]RAGSourceDocument, 0, len(docs))
-		
+
 		for i, doc := range docs {
 			// Add numbered citation to content
 			content.WriteString(fmt.Sprintf("[%d] %s\n\n", i+1, doc.Text))
-			
+
 			// Add source
 			sources = append(sources, RAGSourceDocument{
 				URL:     doc.Citation,
@@ -72,7 +67,7 @@ func CreateRAGToolFromRetriever(retriever rag.Retriever, chatbotID string, _ str
 				Score:   0.0, // Score not provided by our retriever yet
 			})
 		}
-		
+
 		return &RAGToolResponse{
 			Content:  content.String(),
 			Sources:  sources,
@@ -82,16 +77,17 @@ func CreateRAGToolFromRetriever(retriever rag.Retriever, chatbotID string, _ str
 
 	// Create the tool using Eino's InferOptionableTool helper
 	// This automatically generates the JSON schema from the struct tags
-	ragTool := einoUtils.InferOptionableTool(
+	ragTool, err := einoUtils.InferOptionableTool(
 		fmt.Sprintf("query_knowledge_base_%s", chatbotID),
 		fmt.Sprintf("Query the knowledge base for chatbot %s. Use this to find relevant information from the indexed documents. Returns content with citation URLs.", chatbotID),
 		ragFunc,
 	)
-
+	if err != nil {
+		return nil, fmt.Errorf("failed to create RAG tool: %w", err)
+	}
 	return ragTool, nil
 }
 
-// truncate helper function
 func truncate(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
@@ -99,7 +95,6 @@ func truncate(s string, maxLen int) string {
 	return s[:maxLen] + "..."
 }
 
-// HTTPToolRequest defines input for generic HTTP API calls
 type HTTPToolRequest struct {
 	URL     string            `json:"url" jsonschema:"required,description=The API endpoint URL"`
 	Method  string            `json:"method" jsonschema:"required,enum=GET,enum=POST,enum=PUT,enum=DELETE,description=HTTP method"`
@@ -107,9 +102,8 @@ type HTTPToolRequest struct {
 	Body    string            `json:"body,omitempty" jsonschema:"description=Request body (for POST/PUT)"`
 }
 
-// GetEnabledTools returns a list of tools based on the chatbot configuration
-func GetEnabledTools(ctx context.Context, cfg *ChatbotConfig) ([]tool.Tool, error) {
-	var tools []tool.Tool
+func GetEnabledTools(ctx context.Context, cfg *ChatbotConfig) ([]tool.InvokableTool, error) {
+	var tools []tool.InvokableTool
 	var errs []error
 
 	for _, toolName := range cfg.ToolConfigs {
@@ -128,8 +122,6 @@ func GetEnabledTools(ctx context.Context, cfg *ChatbotConfig) ([]tool.Tool, erro
 			}
 			tools = append(tools, ragTool)
 			internalUtils.Zlog.Debug("Added RAG tool", zap.String("chatbot_id", cfg.ChatbotID))
-
-		// Additional tools will be added here in the future
 
 		default:
 			internalUtils.Zlog.Warn("Unknown tool configuration",

@@ -3,13 +3,11 @@ package response
 import (
 	"context"
 	"fmt"
-	"os"
 	"sync"
 
+	"github.com/cloudwego/eino-ext/components/model/gemini"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
-	"github.com/cloudwego/eino/components/tool"
-	"github.com/cloudwego/eino-ext/components/model/gemini"
 	"go.uber.org/zap"
 
 	"github.com/Conversly/lightning-response/internal/embedder"
@@ -45,11 +43,11 @@ type ChatbotConfig struct {
 // Key: chatbotID, Value: compiled Runnable
 var (
 	graphCache sync.Map // map[string]compose.Runnable[[]*schema.Message, *schema.Message]
-	
+
 	// RetrieverCache stores RAG retrievers per chatbot
 	// Key: chatbotID, Value: retriever instance
 	retrieverCache sync.Map // map[string]interface{} - actual retriever type
-	
+
 	// GlobalTools stores non-RAG tools that are shared across tenants
 	// These are initialized once at startup
 	globalTools     map[string]interface{} // tool.InvokableTool
@@ -60,19 +58,19 @@ var (
 // This should be called once at application startup
 func InitializeGraphEngine(ctx context.Context, db *loaders.PostgresClient, embedder *embedder.GeminiEmbedder) error {
 	var initErr error
-	
+
 	globalToolsOnce.Do(func() {
 		utils.Zlog.Info("Initializing graph engine global resources")
-		
+
 		// Initialize global tools map
 		globalTools = make(map[string]interface{})
-		
+
 		// Set global dependencies for RAG tools
 		SetGlobalDependencies(db, embedder)
-		
+
 		utils.Zlog.Info("Graph engine initialized successfully")
 	})
-	
+
 	return initErr
 }
 
@@ -84,18 +82,18 @@ func GetOrCreateTenantGraph(ctx context.Context, cfg *ChatbotConfig) (compose.Ru
 		utils.Zlog.Debug("Using cached graph", zap.String("chatbot_id", cfg.ChatbotID))
 		return cached.(compose.Runnable[[]*schema.Message, *schema.Message]), nil
 	}
-	
+
 	utils.Zlog.Info("Building new graph for chatbot", zap.String("chatbot_id", cfg.ChatbotID))
-	
+
 	// Build the graph
 	graph, err := buildTenantGraph(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build graph for chatbot %s: %w", cfg.ChatbotID, err)
 	}
-	
+
 	// Cache it
 	graphCache.Store(cfg.ChatbotID, graph)
-	
+
 	return graph, nil
 }
 
@@ -103,11 +101,12 @@ func GetOrCreateTenantGraph(ctx context.Context, cfg *ChatbotConfig) (compose.Ru
 // This implements the ReAct agent pattern with conditional edges
 func buildTenantGraph(ctx context.Context, cfg *ChatbotConfig) (compose.Runnable[[]*schema.Message, *schema.Message], error) {
 	// Create Gemini ChatModel with fastest model
+	temp := cfg.Temperature
+	maxToks := cfg.MaxTokens
 	chatModel, err := gemini.NewChatModel(ctx, &gemini.Config{
-		APIKey:      os.Getenv("GEMINI_API_KEY"),
 		Model:       "gemini-2.0-flash-exp", // Fastest Gemini model
-		Temperature: cfg.Temperature,
-		MaxTokens:   cfg.MaxTokens,
+		Temperature: &temp,
+		MaxTokens:   &maxToks,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Gemini chat model: %w", err)
@@ -144,43 +143,12 @@ func buildTenantGraph(ctx context.Context, cfg *ChatbotConfig) (compose.Runnable
 		}),
 	)
 
-	// Get enabled tools for this chatbot
-	tools, err := GetEnabledTools(ctx, cfg)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get enabled tools: %w", err)
-	}
+	// Direct flow (model only) for now
+	graph.AddEdge(compose.START, "model")
+	graph.AddEdge("model", compose.END)
 
-	if len(tools) > 0 {
-		// Add ToolsNode
-		toolsNode := compose.NewToolsNode(tools)
-		graph.AddToolsNode("tools", toolsNode,
-			compose.WithStatePostHandler(func(ctx context.Context, output []*schema.Message, state *GraphState) ([]*schema.Message, error) {
-				// Track tool calls
-				state.ToolCallCount++
-				utils.Zlog.Debug("Tool executed",
-					zap.String("chatbot_id", cfg.ChatbotID),
-					zap.Int("tool_call_count", state.ToolCallCount))
-				return output, nil
-			}),
-		)
-
-		// Define graph edges (ReAct pattern)
-		graph.AddEdge(compose.START, "model")
-		graph.AddBranch("model", createShouldContinueFunc())
-		graph.AddEdge("tools", "model")
-		graph.AddEdge("model", compose.END)
-
-		utils.Zlog.Info("Built graph with ReAct pattern",
-			zap.String("chatbot_id", cfg.ChatbotID),
-			zap.Int("tool_count", len(tools)))
-	} else {
-		// No tools - direct flow (model only)
-		graph.AddEdge(compose.START, "model")
-		graph.AddEdge("model", compose.END)
-
-		utils.Zlog.Info("Built graph without tools",
-			zap.String("chatbot_id", cfg.ChatbotID))
-	}
+	utils.Zlog.Info("Built graph without tools",
+		zap.String("chatbot_id", cfg.ChatbotID))
 
 	// Compile the graph
 	compiled, err := graph.Compile(ctx)
@@ -194,31 +162,7 @@ func buildTenantGraph(ctx context.Context, cfg *ChatbotConfig) (compose.Runnable
 	return compiled, nil
 }
 
-// createShouldContinueFunc returns a conditional branch function
-// This determines whether to continue to tools or end the conversation
-func createShouldContinueFunc() func(context.Context, *GraphState) (string, error) {
-	return func(ctx context.Context, state *GraphState) (string, error) {
-		// If no messages, this shouldn't happen
-		if len(state.Messages) == 0 {
-			return compose.END, nil
-		}
-
-		// Get the last message (should be from assistant)
-		lastMessage := state.Messages[len(state.Messages)-1]
-
-		// If there are tool calls, route to tools node
-		if len(lastMessage.ToolCalls) > 0 {
-			utils.Zlog.Debug("Routing to tools",
-				zap.Int("tool_calls", len(lastMessage.ToolCalls)),
-				zap.String("chatbot_id", state.ChatbotID))
-			return "tools", nil
-		}
-
-		// Otherwise, end the conversation
-		utils.Zlog.Debug("Ending conversation", zap.String("chatbot_id", state.ChatbotID))
-		return compose.END, nil
-	}
-}
+// No tools branching currently
 
 func ClearGraphCache(chatbotID string) {
 	graphCache.Delete(chatbotID)
@@ -244,7 +188,3 @@ func GetCachedGraphCount() int {
 	})
 	return count
 }
-
-
-
-

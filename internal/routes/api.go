@@ -16,8 +16,6 @@ func SetupAPIRoutes(router *gin.Engine, db *loaders.PostgresClient, cfg *config.
 		systemController := controllers.NewSystemController(cfg)
 		v1.GET("/status", systemController.Status)
 		v1.GET("/info", systemController.Info)
-
-		ingestion.RegisterRoutes(v1, db, cfg)
 	}
 }
 

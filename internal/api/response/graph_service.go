@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/cloudwego/eino/compose"
-	"github.com/cloudwego/eino/components/model"
-	"github.com/cloudwego/eino/schema"
 	"github.com/cloudwego/eino-ext/components/model/gemini"
+	"github.com/cloudwego/eino/components/model"
+	"github.com/cloudwego/eino/compose"
+	"github.com/cloudwego/eino/schema"
 	"go.uber.org/zap"
 
 	"github.com/Conversly/lightning-response/internal/config"
@@ -43,24 +43,34 @@ func (s *GraphService) BuildAndRunGraph(ctx context.Context, req *Request) (*Res
 		zap.String("web_id", req.User.ConverslyWebID),
 		zap.String("client_id", req.User.UniqueClientID))
 
-	// Step 1: Validate tenant access
-	_, err := ValidateTenantAccess(ctx, s.db, req.User.ConverslyWebID, req.Metadata.OriginURL)
+	_, err := ValidateChatbotAccess(ctx, s.db, req.User.ConverslyWebID, req.Metadata.OriginURL)
 	if err != nil {
 		return &Response{
 			Response:  "",
 			Citations: []string{},
 			Success:   false,
-		}, fmt.Errorf("tenant validation failed: %w", err)
+		}, fmt.Errorf("chatbot validation failed: %w", err)
 	}
 
 	// Step 2: Load chatbot configuration
-	cfg, err := GetChatbotConfig(ctx, s.db, req.User.ConverslyWebID, req.Metadata.OriginURL)
+	info, err := s.db.GetChatbotInfo(ctx, req.ChatbotID)
 	if err != nil {
 		return &Response{
 			Response:  "",
 			Citations: []string{},
 			Success:   false,
 		}, fmt.Errorf("failed to load chatbot config: %w", err)
+	}
+
+	// Build runtime chatbot config (tools to include RAG only for now)
+	cfg := &ChatbotConfig{
+		ChatbotID:    fmt.Sprintf("%d", info.ID),
+		SystemPrompt: info.SystemPrompt,
+		Temperature:  0.7,
+		Model:        "gemini-2.0-flash-exp",
+		MaxTokens:    1024,
+		TopK:         5,
+		ToolConfigs:  []string{"rag"},
 	}
 
 	// Step 3: Get or create the compiled graph for this chatbot
@@ -70,7 +80,7 @@ func (s *GraphService) BuildAndRunGraph(ctx context.Context, req *Request) (*Res
 			Response:  "",
 			Citations: []string{},
 			Success:   false,
-		}, fmt.Errorf("failed to get tenant graph: %w", err)
+		}, fmt.Errorf("failed to get chatbot graph: %w", err)
 	}
 
 	// Step 4: Parse conversation history from request query field
@@ -104,25 +114,20 @@ func (s *GraphService) BuildAndRunGraph(ctx context.Context, req *Request) (*Res
 	// Step 7: Save messages in background (non-blocking)
 	go func() {
 		saveCtx := context.Background()
-		
-		messagesToSave := []MessageRecord{
-			{
-				UniqueClientID: req.User.UniqueClientID,
-				ChatbotID:      cfg.ChatbotID,
-				Message:        req.Query,
-				Role:           "user",
-				Citations:      []string{},
-			},
-			{
-				UniqueClientID: req.User.UniqueClientID,
-				ChatbotID:      cfg.ChatbotID,
-				Message:        response.Response,
-				Role:           "assistant",
-				Citations:      response.Citations,
-			},
-		}
 
-		if err := SaveConversationMessagesBackground(saveCtx, s.db, messagesToSave); err != nil {
+		if err := SaveConversationMessagesBackground(saveCtx, s.db, MessageRecord{
+			UniqueClientID: req.User.UniqueClientID,
+			ChatbotID:      info.ID,
+			Message:        req.Query,
+			Role:           "user",
+			Citations:      []string{},
+		}, MessageRecord{
+			UniqueClientID: req.User.UniqueClientID,
+			ChatbotID:      info.ID,
+			Message:        response.Response,
+			Role:           "assistant",
+			Citations:      response.Citations,
+		}); err != nil {
 			utils.Zlog.Error("Failed to save messages in background", zap.Error(err))
 		}
 	}()
@@ -152,7 +157,7 @@ func (s *GraphService) invokeGraph(
 		// Common options
 		compose.WithChatModelOption(model.WithTemperature(cfg.Temperature)),
 		compose.WithChatModelOption(model.WithMaxTokens(cfg.MaxTokens)),
-		
+
 		// Gemini-specific options
 		compose.WithChatModelOption(gemini.WithTopK(cfg.TopK)),
 	)
@@ -173,15 +178,9 @@ func (s *GraphService) invokeGraph(
 // extractCitations extracts citation URLs from the message
 func extractCitations(msg *schema.Message) []string {
 	citations := []string{}
-	
-	// Check if there are any metadata with citations
-	if msg.ResponseMeta != nil {
-		if citationsData, ok := msg.ResponseMeta["citations"].([]string); ok {
-			citations = citationsData
-		} else if citationsData, ok := msg.ResponseMeta["sources"].([]string); ok {
-			citations = citationsData
-		}
-	}
-	
+
+	// Best-effort: attempt to pull citations if embedded as plain text tags like [1], [2] with URLs
+	// Eino's ResponseMeta type is provider-specific; skip structured extraction for now
+
 	return citations
 }

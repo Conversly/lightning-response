@@ -1,32 +1,76 @@
 package rag
 
 import (
-    "context"
+	"context"
+	"fmt"
+
+	"github.com/Conversly/lightning-response/internal/embedder"
+	"github.com/Conversly/lightning-response/internal/loaders"
 )
 
-// Document represents a retrieved chunk/source
 type Document struct {
-    Title   string
-    URL     string
-    Snippet string
+	Text     string
+	Citation string
 }
 
-// Config contains minimal RAG settings for the retriever
 type Config struct {
-    TopK int
+	ChatbotID string
+	TopK      int
 }
 
-// Retriever abstracts retrieval of documents relevant to a query.
-// Implementations can use pgvector or any other vector store.
 type Retriever interface {
-    Retrieve(ctx context.Context, tenantID string, query string, topK int) ([]Document, error)
+	Retrieve(ctx context.Context, query string) ([]Document, error)
 }
 
-// NoopRetriever is a placeholder implementation returning no documents.
 type NoopRetriever struct{}
 
 func NewNoopRetriever() *NoopRetriever { return &NoopRetriever{} }
 
-func (n *NoopRetriever) Retrieve(ctx context.Context, tenantID string, query string, topK int) ([]Document, error) {
-    return []Document{}, nil
+func (n *NoopRetriever) Retrieve(ctx context.Context, query string) ([]Document, error) {
+	return []Document{}, nil
+}
+
+// PgVectorRetriever retrieves documents from PostgreSQL using pgvector
+type PgVectorRetriever struct {
+	db        *loaders.PostgresClient
+	embedder  *embedder.GeminiEmbedder
+	chatbotID string
+	topK      int
+}
+
+// NewPgVectorRetriever creates a new retriever with chatbotID and topK configured at initialization
+func NewPgVectorRetriever(db *loaders.PostgresClient, embedder *embedder.GeminiEmbedder, chatbotID string, topK int) *PgVectorRetriever {
+	return &PgVectorRetriever{
+		db:        db,
+		embedder:  embedder,
+		chatbotID: chatbotID,
+		topK:      topK,
+	}
+}
+
+// Retrieve searches for relevant documents using the query
+func (r *PgVectorRetriever) Retrieve(ctx context.Context, query string) ([]Document, error) {
+	queryEmbedding, err := r.embedder.EmbedText(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to embed query: %w", err)
+	}
+
+	results, err := r.db.SearchEmbeddings(ctx, r.chatbotID, queryEmbedding, r.topK)
+	if err != nil {
+		return nil, fmt.Errorf("failed to search embeddings: %w", err)
+	}
+
+	documents := make([]Document, len(results))
+	for i, result := range results {
+		citation := ""
+		if result.Citation != nil {
+			citation = *result.Citation
+		}
+		documents[i] = Document{
+			Text:     result.Text,
+			Citation: citation,
+		}
+	}
+
+	return documents, nil
 }

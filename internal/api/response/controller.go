@@ -4,17 +4,25 @@ import (
     "net/http"
     "time"
 
-    "github.com/Conversly/db-ingestor/internal/utils"
+    "github.com/Conversly/lightning-response/internal/utils"
     "github.com/gin-gonic/gin"
     "go.uber.org/zap"
 )
 
 // Controller handles HTTP requests for the /response endpoint
 type Controller struct {
-    service *Service
+	service      *Service
+	graphService *GraphService
 }
 
-func NewController(s *Service) *Controller { return &Controller{service: s} }
+func NewController(s *Service) *Controller { 
+	return &Controller{service: s} 
+}
+
+// NewGraphController creates a controller with graph-based service
+func NewGraphController(gs *GraphService) *Controller {
+	return &Controller{graphService: gs}
+}
 
 // Respond handles POST /response
 func (c *Controller) Respond(ctx *gin.Context) {
@@ -35,18 +43,41 @@ func (c *Controller) Respond(ctx *gin.Context) {
         apiKey = ctx.GetHeader("x-api-key")
     }
 
-    tenantID, err := c.service.ValidateAndResolveTenant(ctx.Request.Context(), apiKey, req.Metadata.OriginURL)
-    if err != nil {
-        utils.Zlog.Warn("tenant resolution failed", zap.Error(err))
-        ctx.JSON(http.StatusUnauthorized, gin.H{
-            "error":     "unauthorized",
-            "message":   err.Error(),
-            "timestamp": time.Now().UTC(),
-        })
-        return
-    }
+	// Use graph service if available, otherwise fall back to old service
+	var result *Response
+	var err error
+	var tenantID string
 
-    result, err := c.service.BuildAndRunFlow(ctx.Request.Context(), &req, tenantID)
+	if c.graphService != nil {
+		// Graph-based approach
+		tenantID, err = c.graphService.ValidateAndResolveTenant(ctx.Request.Context(), req.User.ConverslyWebID, req.Metadata.OriginURL)
+		if err != nil {
+			utils.Zlog.Warn("tenant resolution failed", zap.Error(err))
+			ctx.JSON(http.StatusUnauthorized, gin.H{
+				"error":     "unauthorized",
+				"message":   err.Error(),
+				"timestamp": time.Now().UTC(),
+			})
+			return
+		}
+
+		result, err = c.graphService.BuildAndRunGraph(ctx.Request.Context(), &req, tenantID)
+	} else {
+		// Legacy approach
+		tenantID, err = c.service.ValidateAndResolveTenant(ctx.Request.Context(), apiKey, req.Metadata.OriginURL)
+		if err != nil {
+			utils.Zlog.Warn("tenant resolution failed", zap.Error(err))
+			ctx.JSON(http.StatusUnauthorized, gin.H{
+				"error":     "unauthorized",
+				"message":   err.Error(),
+				"timestamp": time.Now().UTC(),
+			})
+			return
+		}
+
+		result, err = c.service.BuildAndRunFlow(ctx.Request.Context(), &req, tenantID)
+	}
+
     if err != nil {
         utils.Zlog.Error("flow execution failed", zap.Error(err))
         ctx.JSON(http.StatusInternalServerError, gin.H{

@@ -3,8 +3,8 @@ package response
 import (
     "context"
 
-    "github.com/Conversly/db-ingestor/internal/llm"
-    "github.com/Conversly/db-ingestor/internal/rag"
+    "github.com/Conversly/lightning-response/internal/llm"
+    "github.com/Conversly/lightning-response/internal/rag"
 )
 
 // TenantFlowConfig represents the minimal config needed to build a flow.

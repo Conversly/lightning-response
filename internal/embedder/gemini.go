@@ -12,10 +12,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Conversly/db-ingestor/internal/types"
+	"github.com/Conversly/lightning-response/internal/types"
 )
 
-// GeminiEmbedder handles embedding generation with rotating API keys
 type GeminiEmbedder struct {
 	apiKeys     []string
 	client      *http.Client
@@ -148,26 +147,13 @@ func (g *GeminiEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]fl
 	}
 
 	embeddings := make([][]float64, len(texts))
-	errors := make([]error, len(texts))
-
-	var wg sync.WaitGroup
 
 	for i, text := range texts {
-		wg.Add(1)
-		go func(idx int, txt string) {
-			defer wg.Done()
-			embedding, err := g.EmbedText(ctx, txt)
-			embeddings[idx] = embedding
-			errors[idx] = err
-		}(i, text)
-	}
-
-	wg.Wait()
-
-	for i, err := range errors {
+		embedding, err := g.EmbedText(ctx, text)
 		if err != nil {
 			return nil, fmt.Errorf("failed to embed text at index %d: %w", i, err)
 		}
+		embeddings[i] = embedding
 	}
 
 	return embeddings, nil

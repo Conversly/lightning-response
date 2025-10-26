@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/Conversly/db-ingestor/internal/loaders"
-	"github.com/Conversly/db-ingestor/internal/utils"
+	"github.com/Conversly/lightning-response/internal/loaders"
+	"github.com/Conversly/lightning-response/internal/utils"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )

@@ -6,10 +6,10 @@ import (
     "net/url"
     "strings"
 
-    "github.com/Conversly/db-ingestor/internal/config"
-    "github.com/Conversly/db-ingestor/internal/llm"
-    "github.com/Conversly/db-ingestor/internal/loaders"
-    "github.com/Conversly/db-ingestor/internal/rag"
+    "github.com/Conversly/lightning-response/internal/config"
+    "github.com/Conversly/lightning-response/internal/llm"
+    "github.com/Conversly/lightning-response/internal/loaders"
+    "github.com/Conversly/lightning-response/internal/rag"
 )
 
 // Service orchestrates tenant resolution, flow initialization, and execution.

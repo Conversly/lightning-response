@@ -4,7 +4,7 @@ package utils
 import (
 	"os"
 
-	"github.com/Conversly/db-ingestor/internal/config"
+	"github.com/Conversly/lightning-response/internal/config"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )

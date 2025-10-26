@@ -13,10 +13,10 @@ import (
 	"github.com/joho/godotenv"
 	"go.uber.org/zap"
 
-	"github.com/Conversly/db-ingestor/internal/config"
-	"github.com/Conversly/db-ingestor/internal/loaders"
-	"github.com/Conversly/db-ingestor/internal/routes"
-	"github.com/Conversly/db-ingestor/internal/utils"
+	"github.com/Conversly/lightning-response/internal/config"
+	"github.com/Conversly/lightning-response/internal/loaders"
+	"github.com/Conversly/lightning-response/internal/routes"
+	"github.com/Conversly/lightning-response/internal/utils"
 )
 
 func main() {

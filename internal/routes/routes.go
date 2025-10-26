@@ -1,10 +1,10 @@
 package routes
 
 import (
-	"github.com/Conversly/db-ingestor/internal/config"
-	"github.com/Conversly/db-ingestor/internal/api/response"
-	"github.com/Conversly/db-ingestor/internal/loaders"
-	"github.com/Conversly/db-ingestor/internal/middleware"
+	"github.com/Conversly/lightning-response/internal/config"
+	"github.com/Conversly/lightning-response/internal/api/response"
+	"github.com/Conversly/lightning-response/internal/loaders"
+	"github.com/Conversly/lightning-response/internal/middleware"
 	"github.com/gin-gonic/gin"
 )
 

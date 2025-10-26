@@ -1,8 +1,8 @@
 package response
 
 import (
-    "github.com/Conversly/db-ingestor/internal/config"
-    "github.com/Conversly/db-ingestor/internal/loaders"
+    "github.com/Conversly/lightning-response/internal/config"
+    "github.com/Conversly/lightning-response/internal/loaders"
     "github.com/gin-gonic/gin"
 )
 

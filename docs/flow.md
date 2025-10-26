@@ -28,6 +28,7 @@ middleware :
     chatbotId,
     temperature,
     // more in future
+    tool_configs
 }
 
 4. initializes the Eino agent llm using system prompt, and chatbotId to initialize RAG tool.

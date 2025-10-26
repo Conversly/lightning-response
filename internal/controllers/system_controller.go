@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/Conversly/db-ingestor/internal/config"
+	"github.com/Conversly/lightning-response/internal/config"
 	"github.com/gin-gonic/gin"
 )
 

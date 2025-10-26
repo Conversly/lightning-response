@@ -7,13 +7,27 @@ import (
     "github.com/Conversly/lightning-response/internal/rag"
 )
 
-// TenantFlowConfig represents the minimal config needed to build a flow.
-type TenantFlowConfig struct {
-    TenantID     string
+// ChatbotFlowConfig represents the minimal config needed to build a flow.
+type ChatbotFlowConfig struct {
+    ChatbotID    int
     SystemPrompt string
     Temperature  float32
     Model        string
     TopK         int
+}
+
+// Source represents a document source
+type Source struct {
+    Title   string
+    URL     string
+    Snippet string
+}
+
+// Usage represents token usage information
+type Usage struct {
+    PromptTokens     int
+    CompletionTokens int
+    TotalTokens      int
 }
 
 // FlowInput is the input to the compiled flow
@@ -44,7 +58,7 @@ func NewFlowFactory(provider llm.Provider, retriever rag.Retriever) *FlowFactory
     return &FlowFactory{provider: provider, retriever: retriever}
 }
 
-func (f *FlowFactory) Build(cfg TenantFlowConfig) Flow {
+func (f *FlowFactory) Build(cfg ChatbotFlowConfig) Flow {
     return &agentFlow{
         cfg:       cfg,
         provider:  f.provider,
@@ -54,14 +68,14 @@ func (f *FlowFactory) Build(cfg TenantFlowConfig) Flow {
 
 // agentFlow is a minimal, non-Eino placeholder that wires LLM + RAG
 type agentFlow struct {
-    cfg       TenantFlowConfig
+    cfg       ChatbotFlowConfig
     provider  llm.Provider
     retriever rag.Retriever
 }
 
 func (a *agentFlow) Run(ctx context.Context, in FlowInput) (FlowOutput, error) {
     // 1) Retrieve context (skeleton, ignore errors)
-    docs, _ := a.retriever.Retrieve(ctx, a.cfg.TenantID, in.Query, a.cfg.TopK)
+    docs, _ := a.retriever.Retrieve(ctx, in.Query)
 
     // 2) Build messages: system + user
     msgs := make([]llm.Message, 0, len(in.History)+2)
@@ -84,7 +98,11 @@ func (a *agentFlow) Run(ctx context.Context, in FlowInput) (FlowOutput, error) {
     // 4) Convert docs to sources
     sources := make([]Source, 0, len(docs))
     for _, d := range docs {
-        sources = append(sources, Source{Title: d.Title, URL: d.URL, Snippet: d.Snippet})
+        sources = append(sources, Source{
+            Title:   "",           // rag.Document doesn't have Title
+            URL:     "",           // rag.Document doesn't have URL
+            Snippet: d.Text,       // Use Text as snippet
+        })
     }
 
     return FlowOutput{

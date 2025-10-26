@@ -8,7 +8,6 @@ import (
 	"io"
 	"math"
 	"net/http"
-	"sync"
 	"sync/atomic"
 	"time"
 

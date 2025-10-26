@@ -3,12 +3,23 @@ package response
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
+	einoUtils "github.com/cloudwego/eino/components/tool/utils"
 	"go.uber.org/zap"
 
+	"github.com/Conversly/lightning-response/internal/embedder"
+	"github.com/Conversly/lightning-response/internal/loaders"
+	"github.com/Conversly/lightning-response/internal/rag"
 	internalUtils "github.com/Conversly/lightning-response/internal/utils"
+)
+
+// Global database and embedder references (set during initialization)
+var (
+	globalDB       *loaders.PostgresClient
+	globalEmbedder *embedder.GeminiEmbedder
 )
 
 // RAGToolRequest defines the input schema for the RAG tool
@@ -33,36 +44,37 @@ type RAGSourceDocument struct {
 
 // CreateRAGToolFromRetriever wraps a retriever as an Eino InvokableTool
 // This allows the LLM to call the RAG retriever as a tool
-func CreateRAGToolFromRetriever(retriever interface{}, chatbotID string, ragIndex string) (tool.InvokableTool, error) {
+func CreateRAGToolFromRetriever(retriever rag.Retriever, chatbotID string, _ string) (tool.InvokableTool, error) {
 	// Define the RAG query function
 	ragFunc := func(ctx context.Context, req *RAGToolRequest, opts ...tool.Option) (*RAGToolResponse, error) {
 		internalUtils.Zlog.Debug("RAG tool invoked",
 			zap.String("chatbot_id", chatbotID),
 			zap.String("query", req.Query))
 
-		// TODO: Call the actual retriever
-		// For now, return a placeholder response
-		// 
-		// Example implementation:
-		// docs, err := retriever.Retrieve(ctx, req.Query)
-		// if err != nil {
-		//     return nil, fmt.Errorf("retrieval failed: %w", err)
-		// }
-
-		// Placeholder response
-		sources := []RAGSourceDocument{
-			{
-				Title:   "Document 1",
-				URL:     "https://example.com/doc1",
-				Snippet: "This is a placeholder document snippet for: " + req.Query,
-				Score:   0.95,
-			},
+		// Call the actual retriever
+		docs, err := retriever.Retrieve(ctx, req.Query)
+		if err != nil {
+			return nil, fmt.Errorf("retrieval failed: %w", err)
 		}
 
-		content := "Placeholder RAG content for query: " + req.Query
+		// Format documents into content and extract citations
+		var content strings.Builder
+		sources := make([]RAGSourceDocument, 0, len(docs))
+		
+		for i, doc := range docs {
+			// Add numbered citation to content
+			content.WriteString(fmt.Sprintf("[%d] %s\n\n", i+1, doc.Text))
+			
+			// Add source
+			sources = append(sources, RAGSourceDocument{
+				URL:     doc.Citation,
+				Snippet: truncate(doc.Text, 200),
+				Score:   0.0, // Score not provided by our retriever yet
+			})
+		}
 		
 		return &RAGToolResponse{
-			Content:  content,
+			Content:  content.String(),
 			Sources:  sources,
 			DocCount: len(sources),
 		}, nil
@@ -70,13 +82,21 @@ func CreateRAGToolFromRetriever(retriever interface{}, chatbotID string, ragInde
 
 	// Create the tool using Eino's InferOptionableTool helper
 	// This automatically generates the JSON schema from the struct tags
-	ragTool := utils.InferOptionableTool(
+	ragTool := einoUtils.InferOptionableTool(
 		fmt.Sprintf("query_knowledge_base_%s", chatbotID),
-		fmt.Sprintf("Query the knowledge base for chatbot %s. Use this to find relevant information from the indexed documents.", chatbotID),
+		fmt.Sprintf("Query the knowledge base for chatbot %s. Use this to find relevant information from the indexed documents. Returns content with citation URLs.", chatbotID),
 		ragFunc,
 	)
 
 	return ragTool, nil
+}
+
+// truncate helper function
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 // HTTPToolRequest defines input for generic HTTP API calls
@@ -87,92 +107,6 @@ type HTTPToolRequest struct {
 	Body    string            `json:"body,omitempty" jsonschema:"description=Request body (for POST/PUT)"`
 }
 
-// HTTPToolResponse defines output from HTTP API calls
-type HTTPToolResponse struct {
-	StatusCode int               `json:"status_code" jsonschema:"description=HTTP status code"`
-	Body       string            `json:"body" jsonschema:"description=Response body"`
-	Headers    map[string]string `json:"headers,omitempty" jsonschema:"description=Response headers"`
-}
-
-// CreateHTTPTool creates a generic HTTP API calling tool
-func CreateHTTPTool() (tool.InvokableTool, error) {
-	httpFunc := func(ctx context.Context, req *HTTPToolRequest, opts ...tool.Option) (*HTTPToolResponse, error) {
-		utils.Zlog.Debug("HTTP tool invoked",
-			zap.String("url", req.URL),
-			zap.String("method", req.Method))
-
-		// TODO: Implement actual HTTP call
-		// For now, return placeholder
-		//
-		// Example:
-		// client := &http.Client{Timeout: 10 * time.Second}
-		// httpReq, err := http.NewRequestWithContext(ctx, req.Method, req.URL, strings.NewReader(req.Body))
-		// ...
-
-		return &HTTPToolResponse{
-			StatusCode: 200,
-			Body:       fmt.Sprintf("Placeholder response for %s %s", req.Method, req.URL),
-			Headers:    map[string]string{"Content-Type": "application/json"},
-		}, nil
-	}
-
-	return utils.InferOptionableTool(
-		"http_api_call",
-		"Make HTTP API calls to external services. Use this when you need to fetch data from external APIs.",
-		httpFunc,
-	), nil
-}
-
-// SearchToolRequest defines input for web search
-type SearchToolRequest struct {
-	Query   string `json:"query" jsonschema:"required,description=Search query"`
-	MaxResults int `json:"max_results,omitempty" jsonschema:"description=Maximum number of results (default: 5)"`
-}
-
-// SearchToolResponse defines output from search
-type SearchToolResponse struct {
-	Results []SearchResult `json:"results" jsonschema:"description=Search results"`
-}
-
-// SearchResult represents a single search result
-type SearchResult struct {
-	Title   string `json:"title"`
-	URL     string `json:"url"`
-	Snippet string `json:"snippet"`
-}
-
-// CreateSearchTool creates a web search tool
-func CreateSearchTool() (tool.InvokableTool, error) {
-	searchFunc := func(ctx context.Context, req *SearchToolRequest, opts ...tool.Option) (*SearchToolResponse, error) {
-		utils.Zlog.Debug("Search tool invoked", zap.String("query", req.Query))
-
-		// TODO: Implement actual search
-		// For now, return placeholder
-		maxResults := req.MaxResults
-		if maxResults == 0 {
-			maxResults = 5
-		}
-
-		results := []SearchResult{
-			{
-				Title:   "Search Result 1",
-				URL:     "https://example.com/result1",
-				Snippet: "Placeholder search result for: " + req.Query,
-			},
-		}
-
-		return &SearchToolResponse{
-			Results: results,
-		}, nil
-	}
-
-	return utils.InferOptionableTool(
-		"search_web",
-		"Search the web for information. Use this when you need to find current information not in the knowledge base.",
-		searchFunc,
-	), nil
-}
-
 // GetEnabledTools returns a list of tools based on the chatbot configuration
 func GetEnabledTools(ctx context.Context, cfg *ChatbotConfig) ([]tool.Tool, error) {
 	var tools []tool.Tool
@@ -181,53 +115,24 @@ func GetEnabledTools(ctx context.Context, cfg *ChatbotConfig) ([]tool.Tool, erro
 	for _, toolName := range cfg.ToolConfigs {
 		switch toolName {
 		case "rag":
-			// Get or create RAG retriever for this chatbot
 			retriever, err := getOrCreateRAGRetriever(ctx, cfg)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("failed to create RAG retriever: %w", err))
 				continue
 			}
 
-			ragTool, err := CreateRAGToolFromRetriever(retriever, cfg.ChatbotID, cfg.RAGIndex)
+			ragTool, err := CreateRAGToolFromRetriever(retriever, cfg.ChatbotID, "")
 			if err != nil {
 				errs = append(errs, fmt.Errorf("failed to create RAG tool: %w", err))
 				continue
 			}
 			tools = append(tools, ragTool)
-			utils.Zlog.Debug("Added RAG tool", zap.String("chatbot_id", cfg.ChatbotID))
+			internalUtils.Zlog.Debug("Added RAG tool", zap.String("chatbot_id", cfg.ChatbotID))
 
-		case "http_api":
-			if httpTool, ok := globalTools["http_api"].(tool.InvokableTool); ok {
-				tools = append(tools, httpTool)
-				utils.Zlog.Debug("Added HTTP tool", zap.String("chatbot_id", cfg.ChatbotID))
-			} else {
-				// Create on-demand if not in global cache
-				httpTool, err := CreateHTTPTool()
-				if err != nil {
-					errs = append(errs, fmt.Errorf("failed to create HTTP tool: %w", err))
-					continue
-				}
-				globalTools["http_api"] = httpTool
-				tools = append(tools, httpTool)
-			}
-
-		case "search":
-			if searchTool, ok := globalTools["search"].(tool.InvokableTool); ok {
-				tools = append(tools, searchTool)
-				utils.Zlog.Debug("Added search tool", zap.String("chatbot_id", cfg.ChatbotID))
-			} else {
-				// Create on-demand
-				searchTool, err := CreateSearchTool()
-				if err != nil {
-					errs = append(errs, fmt.Errorf("failed to create search tool: %w", err))
-					continue
-				}
-				globalTools["search"] = searchTool
-				tools = append(tools, searchTool)
-			}
+		// Additional tools will be added here in the future
 
 		default:
-			utils.Zlog.Warn("Unknown tool configuration",
+			internalUtils.Zlog.Warn("Unknown tool configuration",
 				zap.String("tool", toolName),
 				zap.String("chatbot_id", cfg.ChatbotID))
 		}
@@ -237,63 +142,50 @@ func GetEnabledTools(ctx context.Context, cfg *ChatbotConfig) ([]tool.Tool, erro
 		return nil, fmt.Errorf("failed to create any tools: %v", errs)
 	}
 
-	utils.Zlog.Info("Enabled tools for chatbot",
+	internalUtils.Zlog.Info("Enabled tools for chatbot",
 		zap.String("chatbot_id", cfg.ChatbotID),
 		zap.Int("tool_count", len(tools)))
 
 	return tools, nil
 }
 
+// SetGlobalDependencies sets the global database and embedder for RAG tool creation
+// This should be called during graph engine initialization
+func SetGlobalDependencies(db *loaders.PostgresClient, embedder *embedder.GeminiEmbedder) {
+	globalDB = db
+	globalEmbedder = embedder
+	internalUtils.Zlog.Info("Global dependencies set for RAG tools")
+}
+
 // getOrCreateRAGRetriever retrieves or creates a RAG retriever for a chatbot
-func getOrCreateRAGRetriever(ctx context.Context, cfg *ChatbotConfig) (interface{}, error) {
+func getOrCreateRAGRetriever(ctx context.Context, cfg *ChatbotConfig) (rag.Retriever, error) {
 	// Check cache
 	if cached, ok := retrieverCache.Load(cfg.ChatbotID); ok {
-		utils.Zlog.Debug("Using cached retriever", zap.String("chatbot_id", cfg.ChatbotID))
-		return cached, nil
+		internalUtils.Zlog.Debug("Using cached retriever", zap.String("chatbot_id", cfg.ChatbotID))
+		return cached.(rag.Retriever), nil
 	}
 
-	utils.Zlog.Info("Creating new RAG retriever",
+	internalUtils.Zlog.Info("Creating new RAG retriever",
 		zap.String("chatbot_id", cfg.ChatbotID),
-		zap.String("rag_index", cfg.RAGIndex))
+		zap.Int32("top_k", cfg.TopK))
 
-	// TODO: Create actual retriever
-	// Example with Viking DB:
-	// retriever, err := volc_vikingdb.NewRetriever(ctx, &volc_vikingdb.RetrieverConfig{
-	//     Host:       "api-vikingdb.volces.com",
-	//     Region:     "cn-beijing",
-	//     AK:         os.Getenv("VIKING_AK"),
-	//     SK:         os.Getenv("VIKING_SK"),
-	//     Collection: cfg.RAGIndex,
-	//     Index:      "default_index",
-	//     TopK:       &cfg.TopK,
-	// })
-	// if err != nil {
-	//     return nil, fmt.Errorf("failed to create Viking retriever: %w", err)
-	// }
-
-	// Placeholder: return a dummy retriever
-	retriever := &placeholderRetriever{
-		chatbotID: cfg.ChatbotID,
-		ragIndex:  cfg.RAGIndex,
+	if globalDB == nil || globalEmbedder == nil {
+		return nil, fmt.Errorf("global dependencies not set - call SetGlobalDependencies first")
 	}
+
+	// Create PgVector retriever with chatbot-specific configuration
+	retriever := rag.NewPgVectorRetriever(
+		globalDB,
+		globalEmbedder,
+		cfg.ChatbotID,
+		int(cfg.TopK),
+	)
 
 	// Cache it
 	retrieverCache.Store(cfg.ChatbotID, retriever)
 
+	internalUtils.Zlog.Info("RAG retriever created and cached",
+		zap.String("chatbot_id", cfg.ChatbotID))
+
 	return retriever, nil
-}
-
-// placeholderRetriever is a temporary stub until real retriever is wired
-type placeholderRetriever struct {
-	chatbotID string
-	ragIndex  string
-}
-
-func (p *placeholderRetriever) Retrieve(ctx context.Context, query string) ([]*schema.Document, error) {
-	return []*schema.Document{
-		{
-			ID:      "doc1",
-			Content: "Placeholder document for: " + query,
-		},
-	}, nil
 }

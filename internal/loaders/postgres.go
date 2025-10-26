@@ -96,7 +96,6 @@ func (c *PostgresClient) createConnectionPool(workerCount, batchSize int) (*pgxp
 	return pool, nil
 }
 
-
 func (c *PostgresClient) Close() error {
 	if c.pool != nil {
 		c.pool.Close()
@@ -108,6 +107,11 @@ func (c *PostgresClient) Close() error {
 func (c *PostgresClient) GetPool() *pgxpool.Pool {
 	return c.pool
 }
+
+func formatTimeForDB(t time.Time) string {
+	return t.UTC().Format("2006-01-02 15:04:05.000000")
+}
+
 
 // BatchInsertEmbeddings inserts a batch of embeddings into the database
 func (c *PostgresClient) BatchInsertEmbeddings(ctx context.Context, userID, chatbotID string, chunks []EmbeddingData) error {

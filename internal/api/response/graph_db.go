@@ -3,6 +3,7 @@ package response
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -13,6 +14,15 @@ import (
 	"github.com/Conversly/lightning-response/internal/loaders"
 	"github.com/Conversly/lightning-response/internal/utils"
 )
+
+// MessageRecord represents a message to be saved in the database
+type MessageRecord struct {
+	UniqueClientID string
+	ChatbotID      string
+	Message        string
+	Role           string   // "user" or "assistant"
+	Citations      []string
+}
 
 // ConversationMessage represents a message in the database
 type ConversationMessage struct {
@@ -132,132 +142,6 @@ func SaveConversationMessages(ctx context.Context, db *loaders.PostgresClient, r
 	return nil
 }
 
-// GetChatbotConfig retrieves the chatbot configuration from the database
-func GetChatbotConfig(ctx context.Context, db *loaders.PostgresClient, webID string, originURL string) (*ChatbotConfig, error) {
-	utils.Zlog.Debug("Loading chatbot config",
-		zap.String("web_id", webID),
-		zap.String("origin_url", originURL))
-
-	// TODO: Implement actual database query
-	// Example query:
-	// query := `
-	//     SELECT 
-	//         c.chatbot_id,
-	//         c.tenant_id,
-	//         c.system_prompt,
-	//         c.temperature,
-	//         c.model,
-	//         c.top_k,
-	//         c.rag_index,
-	//         c.tool_configs
-	//     FROM chatbots c
-	//     JOIN businesses b ON c.tenant_id = b.tenant_id
-	//     WHERE b.web_id = $1 AND $2 = ANY(b.allowed_domains)
-	// `
-	// 
-	// var cfg ChatbotConfig
-	// var toolConfigsJSON string
-	// err := db.QueryRow(ctx, query, webID, originURL).Scan(
-	//     &cfg.ChatbotID,
-	//     &cfg.TenantID,
-	//     &cfg.SystemPrompt,
-	//     &cfg.Temperature,
-	//     &cfg.Model,
-	//     &cfg.TopK,
-	//     &cfg.RAGIndex,
-	//     &toolConfigsJSON,
-	// )
-	// if err == sql.ErrNoRows {
-	//     return nil, fmt.Errorf("chatbot not found for web_id %s and origin %s", webID, originURL)
-	// }
-	// if err != nil {
-	//     return nil, fmt.Errorf("failed to load chatbot config: %w", err)
-	// }
-	//
-	// // Parse tool configs JSON
-	// if err := json.Unmarshal([]byte(toolConfigsJSON), &cfg.ToolConfigs); err != nil {
-	//     return nil, fmt.Errorf("failed to parse tool configs: %w", err)
-	// }
-
-	// Placeholder: return a default config
-	cfg := &ChatbotConfig{
-		ChatbotID:    "chatbot_default",
-		TenantID:     "tenant_default",
-		SystemPrompt: "You are a helpful AI assistant. Use the available tools to answer user questions accurately.",
-		Temperature:  0.7,
-		Model:        "gpt-4o-mini",
-		TopK:         5,
-		RAGIndex:     "default_collection",
-		ToolConfigs:  []string{"rag", "http_api", "search"},
-	}
-
-	utils.Zlog.Info("Loaded chatbot config",
-		zap.String("chatbot_id", cfg.ChatbotID),
-		zap.String("tenant_id", cfg.TenantID),
-		zap.Strings("tools", cfg.ToolConfigs))
-
-	return cfg, nil
-}
-
-// ValidateTenantAccess checks if the API key and origin URL match in the database
-func ValidateTenantAccess(ctx context.Context, db *loaders.PostgresClient, webID string, originURL string) (string, error) {
-	if webID == "" {
-		return "", fmt.Errorf("missing web_id")
-	}
-	if originURL == "" {
-		return "", fmt.Errorf("missing origin_url")
-	}
-
-	utils.Zlog.Debug("Validating tenant access",
-		zap.String("web_id", webID),
-		zap.String("origin_url", originURL))
-
-	// TODO: Implement actual database validation
-	// Example query:
-	// query := `
-	//     SELECT tenant_id, allowed_domains
-	//     FROM businesses
-	//     WHERE web_id = $1
-	// `
-	// var tenantID string
-	// var allowedDomainsJSON string
-	// err := db.QueryRow(ctx, query, webID).Scan(&tenantID, &allowedDomainsJSON)
-	// if err == sql.ErrNoRows {
-	//     return "", fmt.Errorf("invalid web_id: %s", webID)
-	// }
-	// if err != nil {
-	//     return "", fmt.Errorf("database error: %w", err)
-	// }
-	//
-	// // Parse allowed domains
-	// var allowedDomains []string
-	// if err := json.Unmarshal([]byte(allowedDomainsJSON), &allowedDomains); err != nil {
-	//     return "", fmt.Errorf("failed to parse allowed domains: %w", err)
-	// }
-	//
-	// // Check if origin URL is allowed
-	// originHost := extractHost(originURL)
-	// allowed := false
-	// for _, domain := range allowedDomains {
-	//     if strings.HasSuffix(originHost, domain) || domain == "*" {
-	//         allowed = true
-	//         break
-	//     }
-	// }
-	// if !allowed {
-	//     return "", fmt.Errorf("origin %s not allowed for this web_id", originURL)
-	// }
-
-	// Placeholder: always allow for now
-	tenantID := "tenant_default"
-
-	utils.Zlog.Info("Tenant access validated",
-		zap.String("web_id", webID),
-		zap.String("tenant_id", tenantID))
-
-	return tenantID, nil
-}
-
 // extractHost extracts the host from a URL
 func extractHost(urlStr string) string {
 	// Simple implementation - in production use url.Parse
@@ -270,19 +154,34 @@ func extractHost(urlStr string) string {
 	return urlStr
 }
 
-// MessageToResponse converts an Eino schema.Message to a Response struct
-func MessageToResponse(msg *schema.Message, req *Request) *Response {
-	response := &Response{
-		Mode:            req.Mode,
-		Answer:          msg.Content,
-		Sources:         []Source{},
-		ConversationKey: req.User.UniqueClientID,
+// ParseConversationMessages parses the query field which contains conversation history
+func ParseConversationMessages(queryJSON string) ([]*schema.Message, error) {
+	// Parse the JSON array of messages
+	var rawMessages []map[string]interface{}
+	if err := json.Unmarshal([]byte(queryJSON), &rawMessages); err != nil {
+		return nil, fmt.Errorf("failed to parse conversation JSON: %w", err)
 	}
 
-	// TODO: Extract sources from tool calls if available
-	// This would require parsing the tool responses from the message history
+	messages := make([]*schema.Message, 0, len(rawMessages))
+	for _, raw := range rawMessages {
+		role, ok := raw["role"].(string)
+		if !ok {
+			continue
+		}
 
-	return response
+		content, ok := raw["content"].(string)
+		if !ok {
+			continue
+		}
+
+		if role == "user" {
+			messages = append(messages, schema.UserMessage(content))
+		} else if role == "assistant" {
+			messages = append(messages, schema.AssistantMessage(content))
+		}
+	}
+
+	return messages, nil
 }
 
 // Helper function to check if error is sql.ErrNoRows

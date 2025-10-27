@@ -9,8 +9,6 @@ import (
 	"github.com/jackc/pgx/v4/pgxpool"
 )
 
-
-
 type PostgresClient struct {
 	dsn  string
 	pool *pgxpool.Pool
@@ -103,7 +101,6 @@ func (c *PostgresClient) Close() error {
 	return nil
 }
 
-
 func (c *PostgresClient) GetPool() *pgxpool.Pool {
 	return c.pool
 }
@@ -112,6 +109,59 @@ func formatTimeForDB(t time.Time) string {
 	return t.UTC().Format("2006-01-02 15:04:05.000000")
 }
 
+type MessageRow struct {
+	ChatbotID    int
+	Citations    []string
+	Type         string
+	Content      string
+	CreatedAt    time.Time
+	UniqueConvID string
+}
+
+// BatchInsertMessages inserts a batch of messages into the messages table
+func (c *PostgresClient) BatchInsertMessages(ctx context.Context, rows []MessageRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+
+	tx, err := c.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	query := `
+        INSERT INTO messages (
+            chatbot_id, citations, "type", content, created_at, unique_conv_id
+        ) VALUES ($1, $2, $3, $4, $5, $6)
+    `
+
+	successCount := 0
+	for _, r := range rows {
+		_, err := tx.Exec(ctx, query,
+			r.ChatbotID,
+			r.Citations,
+			r.Type,
+			r.Content,
+			r.CreatedAt.UTC(),
+			r.UniqueConvID,
+		)
+		if err != nil {
+			log.Printf("Failed to insert message for conv=%s chatbot_id=%d: %v", r.UniqueConvID, r.ChatbotID, err)
+			continue
+		}
+		successCount++
+	}
+
+	if successCount == 0 {
+		return fmt.Errorf("failed to insert any messages")
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("failed to commit messages transaction: %w", err)
+	}
+	return nil
+}
 
 // BatchInsertEmbeddings inserts a batch of embeddings into the database
 func (c *PostgresClient) BatchInsertEmbeddings(ctx context.Context, userID, chatbotID string, chunks []EmbeddingData) error {
@@ -197,6 +247,7 @@ func (c *PostgresClient) UpdateDataSourceStatus(ctx context.Context, dataSourceI
 	log.Printf("Updated status to '%s' for %d data sources", status, rowsAffected)
 	return nil
 }
+
 // LoadOriginDomains queries all origin domains from the database
 func (c *PostgresClient) LoadOriginDomains(ctx context.Context) ([]OriginDomainRecord, error) {
 	query := `

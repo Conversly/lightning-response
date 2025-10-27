@@ -12,9 +12,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-// extractHost extracts the host from a URL
 func extractHost(urlStr string) string {
-	// Simple implementation - in production use url.Parse
 	if idx := strings.Index(urlStr, "://"); idx != -1 {
 		urlStr = urlStr[idx+3:]
 	}
@@ -24,7 +22,6 @@ func extractHost(urlStr string) string {
 	return urlStr
 }
 
-// ParseConversationMessages parses the query field which contains conversation history
 func ParseConversationMessages(queryJSON string) ([]*schema.Message, error) {
 	// Parse the JSON array of messages
 	var rawMessages []map[string]interface{}
@@ -54,16 +51,11 @@ func ParseConversationMessages(queryJSON string) ([]*schema.Message, error) {
 	return messages, nil
 }
 
-// ValidateChatbotAccess validates web_id + origin_url mapping using ApiKeyManager
-// Returns the chatbot ID associated with the validated API key and domain
 func ValidateChatbotAccess(ctx context.Context, db *loaders.PostgresClient, converslyWebID string, originURL string) (int, error) {
-	// Ensure maps are loaded at least once
 	if err := utils.GetApiKeyManager().LoadFromDatabase(ctx, db); err != nil {
-		// Non-fatal if already loaded; continue validation even if reload fails
-	}
 
+	}
 	domain := extractHost(originURL)
-	// For now, converslyWebID is used as API key token
 	domainInfo, exists := utils.GetApiKeyManager().ValidateDomain(domain)
 	if !exists || domainInfo.APIKey != converslyWebID {
 		return 0, fmt.Errorf("invalid api key and origin mapping for domain=%s", domain)
@@ -71,17 +63,18 @@ func ValidateChatbotAccess(ctx context.Context, db *loaders.PostgresClient, conv
 	return domainInfo.ChatbotID, nil
 }
 
-// MessageRecord represents a saved message
-type MessageRecord struct {
-	UniqueClientID string
-	ChatbotID      int
-	Message        string
-	Role           string // user | assistant
-	Citations      []string
-}
-
-// SaveConversationMessagesBackground is a placeholder that can be wired to DB later
-func SaveConversationMessagesBackground(ctx context.Context, db *loaders.PostgresClient, records ...MessageRecord) error {
-	// TODO: implement persistence when table is ready. For now, no-op.
-	return nil
+// ExtractLastUserContent returns the content of the last user turn from the raw conversation JSON.
+func ExtractLastUserContent(queryJSON string) string {
+	var rawMessages []map[string]interface{}
+	if err := json.Unmarshal([]byte(queryJSON), &rawMessages); err != nil {
+		return ""
+	}
+	for i := len(rawMessages) - 1; i >= 0; i-- {
+		role, _ := rawMessages[i]["role"].(string)
+		if role == "user" {
+			content, _ := rawMessages[i]["content"].(string)
+			return content
+		}
+	}
+	return ""
 }

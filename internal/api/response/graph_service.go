@@ -119,7 +119,7 @@ func (s *GraphService) BuildAndRunGraph(ctx context.Context, req *Request) (*Res
 		if err := SaveConversationMessagesBackground(saveCtx, s.db, MessageRecord{
 			UniqueClientID: req.User.UniqueClientID,
 			ChatbotID:      info.ID,
-			Message:        req.Query,
+			Message:        ExtractLastUserContent(req.Query),
 			Role:           "user",
 			Citations:      []string{},
 		}, MessageRecord{

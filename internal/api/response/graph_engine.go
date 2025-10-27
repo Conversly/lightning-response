@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/cloudwego/eino-ext/components/model/gemini"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 	"go.uber.org/zap"
 
 	"github.com/Conversly/lightning-response/internal/embedder"
+	"github.com/Conversly/lightning-response/internal/llm"
 	"github.com/Conversly/lightning-response/internal/loaders"
 	"github.com/Conversly/lightning-response/internal/utils"
 )
@@ -26,13 +26,14 @@ type GraphState struct {
 }
 
 type ChatbotConfig struct {
-	ChatbotID    string
-	SystemPrompt string
-	Temperature  float32  // Changed to float32 for Gemini compatibility
-	Model        string   // e.g., "gemini-2.0-flash-exp"
-	MaxTokens    int      // Maximum tokens in response
-	TopK         int32    // Gemini-specific: controls diversity (1-40)
-	ToolConfigs  []string // e.g., ["rag"] more tools can be added
+	ChatbotID     string
+	SystemPrompt  string
+	Temperature   float32  // Changed to float32 for Gemini compatibility
+	Model         string   // e.g., "gemini-2.0-flash-exp"
+	MaxTokens     int      // Maximum tokens in response
+	TopK          int32    // Gemini-specific: controls diversity (1-40)
+	ToolConfigs   []string // e.g., ["rag"] more tools can be added
+	GeminiAPIKeys []string // Multiple API keys for rate limit distribution
 }
 
 var (
@@ -87,21 +88,30 @@ func GetOrCreateChatbotGraph(ctx context.Context, cfg *ChatbotConfig) (compose.R
 }
 
 func buildChatbotGraph(ctx context.Context, cfg *ChatbotConfig) (compose.Runnable[[]*schema.Message, *schema.Message], error) {
+	// Validate API keys
+	if len(cfg.GeminiAPIKeys) == 0 {
+		return nil, fmt.Errorf("at least one Gemini API key is required")
+	}
 
 	temp := cfg.Temperature
 	maxToks := cfg.MaxTokens
-	chatModel, err := gemini.NewChatModel(ctx, &gemini.Config{
-		Model:       "gemini-2.0-flash-exp",
-		Temperature: &temp,
-		MaxTokens:   &maxToks,
-	})
+
+	// Create multi-key chat model with round-robin rotation
+	chatModel, err := llm.NewMultiKeyChatModel(
+		ctx,
+		cfg.GeminiAPIKeys,
+		cfg.Model,
+		&temp,
+		&maxToks,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Gemini chat model: %w", err)
+		return nil, fmt.Errorf("failed to create multi-key chat model: %w", err)
 	}
 
-	utils.Zlog.Info("Created Gemini chat model",
+	utils.Zlog.Info("Created multi-key Gemini chat model",
 		zap.String("chatbot_id", cfg.ChatbotID),
-		zap.String("model", "gemini-2.0-flash-exp"))
+		zap.String("model", cfg.Model),
+		zap.Int("key_count", len(cfg.GeminiAPIKeys)))
 
 	graph := compose.NewGraph[[]*schema.Message, *schema.Message](
 		compose.WithGenLocalState(func(ctx context.Context) *GraphState {

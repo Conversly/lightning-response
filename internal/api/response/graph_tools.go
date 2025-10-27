@@ -31,10 +31,8 @@ type RAGToolResponse struct {
 }
 
 type RAGSourceDocument struct {
-	Title   string  `json:"title,omitempty"`
-	URL     string  `json:"url,omitempty"`
-	Snippet string  `json:"snippet,omitempty"`
-	Score   float64 `json:"score,omitempty"`
+	Text     string  `json:"text,omitempty"`
+	Citation *string `json:"citation,omitempty"`
 }
 
 // CreateRAGToolFromRetriever wraps a retriever as an Eino InvokableTool
@@ -60,11 +58,10 @@ func CreateRAGToolFromRetriever(retriever rag.Retriever, chatbotID string, _ str
 			// Add numbered citation to content
 			content.WriteString(fmt.Sprintf("[%d] %s\n\n", i+1, doc.Text))
 
-			// Add source
+			// Add source with proper types matching database schema
 			sources = append(sources, RAGSourceDocument{
-				URL:     doc.Citation,
-				Snippet: truncate(doc.Text, 200),
-				Score:   0.0, // Score not provided by our retriever yet
+				Text:     doc.Text,
+				Citation: doc.Citation,
 			})
 		}
 
@@ -86,13 +83,6 @@ func CreateRAGToolFromRetriever(retriever rag.Retriever, chatbotID string, _ str
 		return nil, fmt.Errorf("failed to create RAG tool: %w", err)
 	}
 	return ragTool, nil
-}
-
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
 }
 
 type HTTPToolRequest struct {

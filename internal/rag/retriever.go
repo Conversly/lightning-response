@@ -8,26 +8,21 @@ import (
 	"github.com/Conversly/lightning-response/internal/loaders"
 )
 
-type Document struct {
-	Text     string
-	Citation string
-}
-
 type Config struct {
 	ChatbotID string
 	TopK      int
 }
 
 type Retriever interface {
-	Retrieve(ctx context.Context, query string) ([]Document, error)
+	Retrieve(ctx context.Context, query string) ([]loaders.EmbeddingResult, error)
 }
 
 type NoopRetriever struct{}
 
 func NewNoopRetriever() *NoopRetriever { return &NoopRetriever{} }
 
-func (n *NoopRetriever) Retrieve(ctx context.Context, query string) ([]Document, error) {
-	return []Document{}, nil
+func (n *NoopRetriever) Retrieve(ctx context.Context, query string) ([]loaders.EmbeddingResult, error) {
+	return []loaders.EmbeddingResult{}, nil
 }
 
 // PgVectorRetriever retrieves documents from PostgreSQL using pgvector
@@ -49,7 +44,7 @@ func NewPgVectorRetriever(db *loaders.PostgresClient, embedder *embedder.GeminiE
 }
 
 // Retrieve searches for relevant documents using the query
-func (r *PgVectorRetriever) Retrieve(ctx context.Context, query string) ([]Document, error) {
+func (r *PgVectorRetriever) Retrieve(ctx context.Context, query string) ([]loaders.EmbeddingResult, error) {
 	queryEmbedding, err := r.embedder.EmbedText(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to embed query: %w", err)
@@ -60,17 +55,5 @@ func (r *PgVectorRetriever) Retrieve(ctx context.Context, query string) ([]Docum
 		return nil, fmt.Errorf("failed to search embeddings: %w", err)
 	}
 
-	documents := make([]Document, len(results))
-	for i, result := range results {
-		citation := ""
-		if result.Citation != nil {
-			citation = *result.Citation
-		}
-		documents[i] = Document{
-			Text:     result.Text,
-			Citation: citation,
-		}
-	}
-
-	return documents, nil
+	return results, nil
 }

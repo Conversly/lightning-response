@@ -1,8 +1,8 @@
 package routes
 
 import (
-	"github.com/Conversly/lightning-response/internal/config"
 	"github.com/Conversly/lightning-response/internal/api/response"
+	"github.com/Conversly/lightning-response/internal/config"
 	"github.com/Conversly/lightning-response/internal/loaders"
 	"github.com/Conversly/lightning-response/internal/middleware"
 	"github.com/gin-gonic/gin"
@@ -18,8 +18,6 @@ func SetupRoutes(router *gin.Engine, db *loaders.PostgresClient, cfg *config.Con
 
 	// Setup route groups
 	SetupHealthRoutes(router, db)
-	SetupAPIRoutes(router, db, cfg)
 	response.RegisterRoutes(router, db, cfg)
-	SetupRootRoutes(router, cfg)
 	Setup404Handler(router)
 }

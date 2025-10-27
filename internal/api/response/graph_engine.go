@@ -15,8 +15,6 @@ import (
 	"github.com/Conversly/lightning-response/internal/utils"
 )
 
-// GraphState represents the shared state accessible by all nodes in the graph
-// This is thread-safe and managed by Eino's ProcessState
 type GraphState struct {
 	Messages        []*schema.Message      // Conversation history
 	RAGDocs         []*schema.Document     // Retrieved documents
@@ -27,8 +25,6 @@ type GraphState struct {
 	Citations       []string               // Collected citations from RAG tool
 }
 
-// ChatbotConfig represents the runtime configuration for a specific chatbot
-// This is loaded from the database per tenant/chatbot
 type ChatbotConfig struct {
 	ChatbotID    string
 	SystemPrompt string
@@ -39,16 +35,11 @@ type ChatbotConfig struct {
 	ToolConfigs  []string // e.g., ["rag"] more tools can be added
 }
 
-// GraphCache stores compiled graphs per chatbot to avoid recompilation
-// Key: chatbotID, Value: compiled Runnable
 var (
 	graphCache sync.Map // map[string]compose.Runnable[[]*schema.Message, *schema.Message]
 
-	// RetrieverCache stores RAG retrievers per chatbot
-	// Key: chatbotID, Value: retriever instance
 	retrieverCache sync.Map // map[string]interface{} - actual retriever type
 
-	// GlobalTools stores non-RAG tools that are shared across tenants
 	// These are initialized once at startup
 	globalTools     map[string]interface{} // tool.InvokableTool
 	globalToolsOnce sync.Once
@@ -74,9 +65,7 @@ func InitializeGraphEngine(ctx context.Context, db *loaders.PostgresClient, embe
 	return initErr
 }
 
-// GetOrCreateTenantGraph retrieves a cached graph or creates a new one for the chatbot
-// This is the core function that builds the Eino graph with all nodes and edges
-func GetOrCreateTenantGraph(ctx context.Context, cfg *ChatbotConfig) (compose.Runnable[[]*schema.Message, *schema.Message], error) {
+func GetOrCreateChatbotGraph(ctx context.Context, cfg *ChatbotConfig) (compose.Runnable[[]*schema.Message, *schema.Message], error) {
 	// Check cache first
 	if cached, ok := graphCache.Load(cfg.ChatbotID); ok {
 		utils.Zlog.Debug("Using cached graph", zap.String("chatbot_id", cfg.ChatbotID))
@@ -86,7 +75,7 @@ func GetOrCreateTenantGraph(ctx context.Context, cfg *ChatbotConfig) (compose.Ru
 	utils.Zlog.Info("Building new graph for chatbot", zap.String("chatbot_id", cfg.ChatbotID))
 
 	// Build the graph
-	graph, err := buildTenantGraph(ctx, cfg)
+	graph, err := buildChatbotGraph(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build graph for chatbot %s: %w", cfg.ChatbotID, err)
 	}
@@ -97,14 +86,12 @@ func GetOrCreateTenantGraph(ctx context.Context, cfg *ChatbotConfig) (compose.Ru
 	return graph, nil
 }
 
-// buildTenantGraph constructs the complete Eino graph for a specific chatbot
-// This implements the ReAct agent pattern with conditional edges
-func buildTenantGraph(ctx context.Context, cfg *ChatbotConfig) (compose.Runnable[[]*schema.Message, *schema.Message], error) {
-	// Create Gemini ChatModel with fastest model
+func buildChatbotGraph(ctx context.Context, cfg *ChatbotConfig) (compose.Runnable[[]*schema.Message, *schema.Message], error) {
+
 	temp := cfg.Temperature
 	maxToks := cfg.MaxTokens
 	chatModel, err := gemini.NewChatModel(ctx, &gemini.Config{
-		Model:       "gemini-2.0-flash-exp", // Fastest Gemini model
+		Model:       "gemini-2.0-flash-exp",
 		Temperature: &temp,
 		MaxTokens:   &maxToks,
 	})
@@ -116,7 +103,6 @@ func buildTenantGraph(ctx context.Context, cfg *ChatbotConfig) (compose.Runnable
 		zap.String("chatbot_id", cfg.ChatbotID),
 		zap.String("model", "gemini-2.0-flash-exp"))
 
-	// Create graph with state initialization
 	graph := compose.NewGraph[[]*schema.Message, *schema.Message](
 		compose.WithGenLocalState(func(ctx context.Context) *GraphState {
 			return &GraphState{
@@ -169,8 +155,6 @@ func ClearGraphCache(chatbotID string) {
 	utils.Zlog.Info("Cleared graph cache", zap.String("chatbot_id", chatbotID))
 }
 
-// ClearAllGraphCaches removes all cached graphs
-// Useful for testing or major configuration changes
 func ClearAllGraphCaches() {
 	graphCache.Range(func(key, value interface{}) bool {
 		graphCache.Delete(key)

@@ -74,7 +74,7 @@ func (s *GraphService) BuildAndRunGraph(ctx context.Context, req *Request) (*Res
 	}
 
 	// Step 3: Get or create the compiled graph for this chatbot
-	compiledGraph, err := GetOrCreateTenantGraph(ctx, cfg)
+	compiledGraph, err := GetOrCreateChatbotGraph(ctx, cfg)
 	if err != nil {
 		return &Response{
 			Response:  "",

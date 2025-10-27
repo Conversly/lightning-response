@@ -10,7 +10,7 @@ import (
 )
 
 type ApiKeyManager struct {
-	mu sync.RWMutex
+	mu        sync.RWMutex
 	apiKeyMap map[string]map[int][]string
 	domainMap map[string]DomainInfo
 }
@@ -62,6 +62,8 @@ func (akm *ApiKeyManager) LoadFromDatabase(ctx context.Context, pgClient *loader
 			ChatbotID: record.ChatbotID,
 			UserID:    record.UserID,
 		}
+
+		Zlog.Sugar().Infof("Loaded origin domain: APIKey=%s, ChatbotID=%d, Domain=%s", record.APIKey, record.ChatbotID, record.Domain)
 
 		loadedCount++
 	}

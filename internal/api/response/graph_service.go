@@ -43,7 +43,7 @@ func (s *GraphService) BuildAndRunGraph(ctx context.Context, req *Request) (*Res
 		zap.String("web_id", req.User.ConverslyWebID),
 		zap.String("client_id", req.User.UniqueClientID))
 
-	_, err := ValidateChatbotAccess(ctx, s.db, req.User.ConverslyWebID, req.Metadata.OriginURL)
+	chatbotID, err := ValidateChatbotAccess(ctx, s.db, req.User.ConverslyWebID, req.Metadata.OriginURL)
 	if err != nil {
 		return &Response{
 			Response:  "",
@@ -52,8 +52,8 @@ func (s *GraphService) BuildAndRunGraph(ctx context.Context, req *Request) (*Res
 		}, fmt.Errorf("chatbot validation failed: %w", err)
 	}
 
-	// Step 2: Load chatbot configuration
-	info, err := s.db.GetChatbotInfo(ctx, req.ChatbotID)
+	// Step 2: Load chatbot configuration using the validated chatbot ID from API key manager
+	info, err := s.db.GetChatbotInfo(ctx, chatbotID)
 	if err != nil {
 		return &Response{
 			Response:  "",
@@ -64,13 +64,14 @@ func (s *GraphService) BuildAndRunGraph(ctx context.Context, req *Request) (*Res
 
 	// Build runtime chatbot config (tools to include RAG only for now)
 	cfg := &ChatbotConfig{
-		ChatbotID:    fmt.Sprintf("%d", info.ID),
-		SystemPrompt: info.SystemPrompt,
-		Temperature:  0.7,
-		Model:        "gemini-2.0-flash-exp",
-		MaxTokens:    1024,
-		TopK:         5,
-		ToolConfigs:  []string{"rag"},
+		ChatbotID:     fmt.Sprintf("%d", info.ID),
+		SystemPrompt:  info.SystemPrompt,
+		Temperature:   0.7,
+		Model:         "gemini-2.0-flash-exp",
+		MaxTokens:     1024,
+		TopK:          5,
+		ToolConfigs:   []string{"rag"},
+		GeminiAPIKeys: s.cfg.GeminiAPIKeys, // Pass API keys from config
 	}
 
 	// Step 3: Get or create the compiled graph for this chatbot

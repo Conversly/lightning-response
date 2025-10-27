@@ -1,7 +1,6 @@
 package response
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -55,13 +54,9 @@ func ParseConversationMessages(queryJSON string) ([]*schema.Message, error) {
 	return messages, nil
 }
 
-// Helper function to check if error is sql.ErrNoRows
-func isNoRowsError(err error) bool {
-	return err == sql.ErrNoRows
-}
-
 // ValidateChatbotAccess validates web_id + origin_url mapping using ApiKeyManager
-func ValidateChatbotAccess(ctx context.Context, db *loaders.PostgresClient, converslyWebID string, originURL string) (bool, error) {
+// Returns the chatbot ID associated with the validated API key and domain
+func ValidateChatbotAccess(ctx context.Context, db *loaders.PostgresClient, converslyWebID string, originURL string) (int, error) {
 	// Ensure maps are loaded at least once
 	if err := utils.GetApiKeyManager().LoadFromDatabase(ctx, db); err != nil {
 		// Non-fatal if already loaded; continue validation even if reload fails
@@ -69,10 +64,11 @@ func ValidateChatbotAccess(ctx context.Context, db *loaders.PostgresClient, conv
 
 	domain := extractHost(originURL)
 	// For now, converslyWebID is used as API key token
-	if !utils.GetApiKeyManager().ValidateApiKeyAndDomain(converslyWebID, domain) {
-		return false, fmt.Errorf("invalid api key and origin mapping for domain=%s", domain)
+	domainInfo, exists := utils.GetApiKeyManager().ValidateDomain(domain)
+	if !exists || domainInfo.APIKey != converslyWebID {
+		return 0, fmt.Errorf("invalid api key and origin mapping for domain=%s", domain)
 	}
-	return true, nil
+	return domainInfo.ChatbotID, nil
 }
 
 // MessageRecord represents a saved message

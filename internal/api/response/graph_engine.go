@@ -2,8 +2,8 @@ package response
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
-	"sync"
 
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
@@ -12,6 +12,7 @@ import (
 	"github.com/Conversly/lightning-response/internal/embedder"
 	"github.com/Conversly/lightning-response/internal/llm"
 	"github.com/Conversly/lightning-response/internal/loaders"
+	"github.com/Conversly/lightning-response/internal/rag"
 	"github.com/Conversly/lightning-response/internal/utils"
 )
 
@@ -36,58 +37,14 @@ type ChatbotConfig struct {
 	GeminiAPIKeys []string // Multiple API keys for rate limit distribution
 }
 
-var (
-	graphCache sync.Map // map[string]compose.Runnable[[]*schema.Message, *schema.Message]
-
-	retrieverCache sync.Map // map[string]interface{} - actual retriever type
-
-	// These are initialized once at startup
-	globalTools     map[string]interface{} // tool.InvokableTool
-	globalToolsOnce sync.Once
-)
-
-// InitializeGraphEngine initializes global resources for the graph engine
-// This should be called once at application startup
-func InitializeGraphEngine(ctx context.Context, db *loaders.PostgresClient, embedder *embedder.GeminiEmbedder) error {
-	var initErr error
-
-	globalToolsOnce.Do(func() {
-		utils.Zlog.Info("Initializing graph engine global resources")
-
-		// Initialize global tools map
-		globalTools = make(map[string]interface{})
-
-		// Set global dependencies for RAG tools
-		SetGlobalDependencies(db, embedder)
-
-		utils.Zlog.Info("Graph engine initialized successfully")
-	})
-
-	return initErr
+// GraphDependencies holds dependencies needed for graph building
+type GraphDependencies struct {
+	DB       *loaders.PostgresClient
+	Embedder *embedder.GeminiEmbedder
 }
 
-func GetOrCreateChatbotGraph(ctx context.Context, cfg *ChatbotConfig) (compose.Runnable[[]*schema.Message, *schema.Message], error) {
-	// Check cache first
-	if cached, ok := graphCache.Load(cfg.ChatbotID); ok {
-		utils.Zlog.Debug("Using cached graph", zap.String("chatbot_id", cfg.ChatbotID))
-		return cached.(compose.Runnable[[]*schema.Message, *schema.Message]), nil
-	}
-
-	utils.Zlog.Info("Building new graph for chatbot", zap.String("chatbot_id", cfg.ChatbotID))
-
-	// Build the graph
-	graph, err := buildChatbotGraph(ctx, cfg)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build graph for chatbot %s: %w", cfg.ChatbotID, err)
-	}
-
-	// Cache it
-	graphCache.Store(cfg.ChatbotID, graph)
-
-	return graph, nil
-}
-
-func buildChatbotGraph(ctx context.Context, cfg *ChatbotConfig) (compose.Runnable[[]*schema.Message, *schema.Message], error) {
+// BuildChatbotGraph creates a new graph for each request
+func BuildChatbotGraph(ctx context.Context, cfg *ChatbotConfig, deps *GraphDependencies) (compose.Runnable[[]*schema.Message, *schema.Message], error) {
 	// Validate API keys
 	if len(cfg.GeminiAPIKeys) == 0 {
 		return nil, fmt.Errorf("at least one Gemini API key is required")
@@ -127,15 +84,82 @@ func buildChatbotGraph(ctx context.Context, cfg *ChatbotConfig) (compose.Runnabl
 		}),
 	)
 
-	// Add ChatModel node with state handler
+	// Add ChatModel node with state handlers
 	graph.AddChatModelNode("model", chatModel,
 		compose.WithStatePreHandler(func(ctx context.Context, input []*schema.Message, state *GraphState) ([]*schema.Message, error) {
 			// Update state with incoming messages
 			state.Messages = append(state.Messages, input...)
+
+			// If RAG is enabled, retrieve documents and capture citations into state
+			ragEnabled := false
+			for _, tool := range cfg.ToolConfigs {
+				if tool == "rag" {
+					ragEnabled = true
+					break
+				}
+			}
+
+			if ragEnabled {
+				// Create retriever for this request
+				retriever := rag.NewPgVectorRetriever(
+					deps.DB,
+					deps.Embedder,
+					cfg.ChatbotID,
+					int(cfg.TopK),
+				)
+
+				// Get last user message content
+				var query string
+				for i := len(state.Messages) - 1; i >= 0; i-- {
+					if state.Messages[i] != nil && state.Messages[i].Content != "" {
+						query = state.Messages[i].Content
+						break
+					}
+				}
+
+				if query != "" {
+					results, rerr := retriever.Retrieve(ctx, query)
+					if rerr != nil {
+						utils.Zlog.Warn("RAG retrieval failed; continuing without citations",
+							zap.String("chatbot_id", cfg.ChatbotID),
+							zap.Error(rerr))
+					} else {
+						citations := make([]string, 0, len(results))
+						for _, res := range results {
+							if res.Citation != nil && *res.Citation != "" {
+								citations = append(citations, *res.Citation)
+							}
+						}
+						state.Citations = citations
+						utils.Zlog.Debug("Captured citations from RAG",
+							zap.String("chatbot_id", cfg.ChatbotID),
+							zap.Int("citations", len(state.Citations)))
+					}
+				}
+			}
+
+			// Prepare messages with system prompt at the beginning
+			finalMessages := make([]*schema.Message, 0, len(state.Messages)+1)
+
+			// Add system message with built prompt at the start
+			systemPromptContent := promptBuilder(cfg.SystemPrompt)
+			finalMessages = append(finalMessages, schema.SystemMessage(systemPromptContent))
+
+			// Add all conversation messages
+			finalMessages = append(finalMessages, state.Messages...)
+
 			utils.Zlog.Debug("State updated with messages",
 				zap.String("chatbot_id", cfg.ChatbotID),
-				zap.Int("total_messages", len(state.Messages)))
-			return state.Messages, nil
+				zap.Int("total_messages", len(finalMessages)))
+			return finalMessages, nil
+		}),
+		compose.WithStatePostHandler(func(ctx context.Context, output *schema.Message, state *GraphState) (*schema.Message, error) {
+			if len(state.Citations) > 0 {
+				// Append structured citations suffix so caller can parse and strip
+				suffixBytes, _ := json.Marshal(state.Citations)
+				output.Content = output.Content + "\n\n<<<CITATIONS>>>" + string(suffixBytes) + "<<<END>>>"
+			}
+			return output, nil
 		}),
 	)
 
@@ -156,29 +180,4 @@ func buildChatbotGraph(ctx context.Context, cfg *ChatbotConfig) (compose.Runnabl
 		zap.String("chatbot_id", cfg.ChatbotID))
 
 	return compiled, nil
-}
-
-// No tools branching currently
-
-func ClearGraphCache(chatbotID string) {
-	graphCache.Delete(chatbotID)
-	utils.Zlog.Info("Cleared graph cache", zap.String("chatbot_id", chatbotID))
-}
-
-func ClearAllGraphCaches() {
-	graphCache.Range(func(key, value interface{}) bool {
-		graphCache.Delete(key)
-		return true
-	})
-	utils.Zlog.Info("Cleared all graph caches")
-}
-
-// GetCachedGraphCount returns the number of cached graphs (for monitoring)
-func GetCachedGraphCount() int {
-	count := 0
-	graphCache.Range(func(key, value interface{}) bool {
-		count++
-		return true
-	})
-	return count
 }

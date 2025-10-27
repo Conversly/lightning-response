@@ -8,19 +8,18 @@ import (
 	"github.com/Conversly/lightning-response/internal/loaders"
 	"github.com/Conversly/lightning-response/internal/utils"
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
 // RegisterRoutes registers the /response endpoint at the root level
 func RegisterRoutes(router *gin.Engine, db *loaders.PostgresClient, cfg *config.Config) {
 	ctx := context.Background()
 
-	// Load API key/domain map into memory (used for access validation)
 	_ = utils.GetApiKeyManager().LoadFromDatabase(ctx, db)
 
-	// Create embedder for RAG retriever
 	emb, err := embedder.NewGeminiEmbedder(cfg.GeminiAPIKeys)
 	if err != nil {
-		// If embedder fails, we still register the route, but requests will fail at runtime
+		utils.Zlog.Error("failed to create embedder", zap.Error(err))
 	}
 
 	// Wire service

@@ -14,14 +14,11 @@ import (
 	"github.com/Conversly/lightning-response/internal/utils"
 )
 
-// MultiKeyChatModel wraps multiple Gemini chat models with round-robin key rotation
-// This distributes API requests across multiple keys to avoid rate limits
 type MultiKeyChatModel struct {
 	models   []model.ToolCallingChatModel
 	keyIndex uint64 // atomic counter for round-robin selection
 }
 
-// NewMultiKeyChatModel creates a chat model that rotates between multiple API keys
 func NewMultiKeyChatModel(ctx context.Context, apiKeys []string, modelName string, temperature *float32, maxTokens *int) (*MultiKeyChatModel, error) {
 	if len(apiKeys) == 0 {
 		return nil, fmt.Errorf("at least one API key is required")
@@ -30,7 +27,6 @@ func NewMultiKeyChatModel(ctx context.Context, apiKeys []string, modelName strin
 	models := make([]model.ToolCallingChatModel, len(apiKeys))
 
 	for i, key := range apiKeys {
-		// Create Gemini client for this key
 		client, err := genai.NewClient(ctx, &genai.ClientConfig{
 			APIKey: key,
 		})
@@ -62,8 +58,6 @@ func NewMultiKeyChatModel(ctx context.Context, apiKeys []string, modelName strin
 	}, nil
 }
 
-// getNextModel returns the next model using round-robin selection
-// Thread-safe: uses atomic operations to ensure fair distribution
 func (m *MultiKeyChatModel) getNextModel() model.ToolCallingChatModel {
 	if len(m.models) == 1 {
 		return m.models[0]
@@ -72,17 +66,14 @@ func (m *MultiKeyChatModel) getNextModel() model.ToolCallingChatModel {
 	return m.models[idx%uint64(len(m.models))]
 }
 
-// Generate implements model.ChatModel interface
 func (m *MultiKeyChatModel) Generate(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.Message, error) {
 	return m.getNextModel().Generate(ctx, input, opts...)
 }
 
-// Stream implements model.ChatModel interface
 func (m *MultiKeyChatModel) Stream(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.StreamReader[*schema.Message], error) {
 	return m.getNextModel().Stream(ctx, input, opts...)
 }
 
-// WithTools implements model.ToolCallingChatModel interface
 func (m *MultiKeyChatModel) WithTools(tools []*schema.ToolInfo) (model.ToolCallingChatModel, error) {
 	newModels := make([]model.ToolCallingChatModel, len(m.models))
 
@@ -100,9 +91,7 @@ func (m *MultiKeyChatModel) WithTools(tools []*schema.ToolInfo) (model.ToolCalli
 	}, nil
 }
 
-// BindTools implements model.ToolCallingChatModel interface
 func (m *MultiKeyChatModel) BindTools(tools []*schema.ToolInfo) error {
-	// Create new models with tools bound
 	newModels := make([]model.ToolCallingChatModel, len(m.models))
 
 	for i, chatModel := range m.models {

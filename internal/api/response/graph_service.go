@@ -2,11 +2,11 @@ package response
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
-	"github.com/cloudwego/eino-ext/components/model/gemini"
-	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 	"go.uber.org/zap"
@@ -32,10 +32,20 @@ func NewGraphService(db *loaders.PostgresClient, cfg *config.Config, embedder *e
 }
 
 func (s *GraphService) Initialize(ctx context.Context) error {
-	return InitializeGraphEngine(ctx, s.db, s.embedder)
+	// No initialization needed - caching removed
+	utils.Zlog.Info("Graph service initialized (no caching)")
+	return nil
 }
 
-// BuildAndRunGraph is the main entry point for processing a request using Eino graphs
+// errorResponse creates a failed Response with the given error
+func errorResponse(err error) (*Response, error) {
+	return &Response{
+		Response:  "",
+		Citations: []string{},
+		Success:   false,
+	}, err
+}
+
 func (s *GraphService) BuildAndRunGraph(ctx context.Context, req *Request) (*Response, error) {
 	startTime := time.Now()
 
@@ -45,24 +55,14 @@ func (s *GraphService) BuildAndRunGraph(ctx context.Context, req *Request) (*Res
 
 	chatbotID, err := ValidateChatbotAccess(ctx, s.db, req.User.ConverslyWebID, req.Metadata.OriginURL)
 	if err != nil {
-		return &Response{
-			Response:  "",
-			Citations: []string{},
-			Success:   false,
-		}, fmt.Errorf("chatbot validation failed: %w", err)
+		return errorResponse(fmt.Errorf("chatbot validation failed: %w", err))
 	}
 
-	// Step 2: Load chatbot configuration using the validated chatbot ID from API key manager
 	info, err := s.db.GetChatbotInfo(ctx, chatbotID)
 	if err != nil {
-		return &Response{
-			Response:  "",
-			Citations: []string{},
-			Success:   false,
-		}, fmt.Errorf("failed to load chatbot config: %w", err)
+		return errorResponse(fmt.Errorf("failed to load chatbot config: %w", err))
 	}
 
-	// Build runtime chatbot config (tools to include RAG only for now)
 	cfg := &ChatbotConfig{
 		ChatbotID:     fmt.Sprintf("%d", info.ID),
 		SystemPrompt:  info.SystemPrompt,
@@ -71,38 +71,26 @@ func (s *GraphService) BuildAndRunGraph(ctx context.Context, req *Request) (*Res
 		MaxTokens:     1024,
 		TopK:          5,
 		ToolConfigs:   []string{"rag"},
-		GeminiAPIKeys: s.cfg.GeminiAPIKeys, // Pass API keys from config
+		GeminiAPIKeys: s.cfg.GeminiAPIKeys,
 	}
 
-	// Step 3: Get or create the compiled graph for this chatbot
-	compiledGraph, err := GetOrCreateChatbotGraph(ctx, cfg)
+	deps := &GraphDependencies{
+		DB:       s.db,
+		Embedder: s.embedder,
+	}
+
+	compiledGraph, err := BuildChatbotGraph(ctx, cfg, deps)
 	if err != nil {
-		return &Response{
-			Response:  "",
-			Citations: []string{},
-			Success:   false,
-		}, fmt.Errorf("failed to get chatbot graph: %w", err)
+		return errorResponse(fmt.Errorf("failed to build chatbot graph: %w", err))
 	}
 
-	// Step 4: Parse conversation history from request query field
-	// The query field contains the whole JSON array of previous conversation
 	messages, err := ParseConversationMessages(req.Query)
 	if err != nil {
-		return &Response{
-			Response:  "",
-			Citations: []string{},
-			Success:   false,
-		}, fmt.Errorf("failed to parse conversation: %w", err)
+		return errorResponse(fmt.Errorf("failed to parse conversation: %w", err))
 	}
-
-	// Step 5: Execute the graph with runtime options
 	result, citations, err := s.invokeGraph(ctx, compiledGraph, messages, cfg)
 	if err != nil {
-		return &Response{
-			Response:  "",
-			Citations: []string{},
-			Success:   false,
-		}, fmt.Errorf("graph execution failed: %w", err)
+		return errorResponse(fmt.Errorf("graph execution failed: %w", err))
 	}
 
 	// Step 6: Build response
@@ -153,20 +141,12 @@ func (s *GraphService) invokeGraph(
 		zap.String("chatbot_id", cfg.ChatbotID),
 		zap.Int("message_count", len(messages)))
 
-	// Invoke graph with Gemini-specific runtime options
-	result, err := graph.Invoke(ctx, messages,
-		// Common options
-		compose.WithChatModelOption(model.WithTemperature(cfg.Temperature)),
-		compose.WithChatModelOption(model.WithMaxTokens(cfg.MaxTokens)),
-
-		// Gemini-specific options
-		compose.WithChatModelOption(gemini.WithTopK(cfg.TopK)),
-	)
+	result, err := graph.Invoke(ctx, messages)
 	if err != nil {
 		return nil, nil, fmt.Errorf("graph invocation failed: %w", err)
 	}
 
-	// Extract citations from the result
+	// Parse structured citations suffix if present and strip it from content
 	citations := extractCitations(result)
 
 	utils.Zlog.Debug("Graph execution completed",
@@ -178,10 +158,24 @@ func (s *GraphService) invokeGraph(
 
 // extractCitations extracts citation URLs from the message
 func extractCitations(msg *schema.Message) []string {
-	citations := []string{}
+	// Look for structured suffix appended by the graph: <<<CITATIONS>>>[...]<<<END>>>
+	const startTag = "<<<CITATIONS>>>"
+	const endTag = "<<<END>>>"
 
-	// Best-effort: attempt to pull citations if embedded as plain text tags like [1], [2] with URLs
-	// Eino's ResponseMeta type is provider-specific; skip structured extraction for now
+	content := msg.Content
+	start := strings.LastIndex(content, startTag)
+	end := strings.LastIndex(content, endTag)
+	if start == -1 || end == -1 || end <= start {
+		return []string{}
+	}
 
+	jsonPart := content[start+len(startTag) : end]
+	var citations []string
+	if err := json.Unmarshal([]byte(jsonPart), &citations); err != nil {
+		return []string{}
+	}
+
+	// Strip the suffix from the content
+	msg.Content = strings.TrimSpace(content[:start])
 	return citations
 }

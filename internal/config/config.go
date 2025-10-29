@@ -7,34 +7,24 @@ import (
 )
 
 type Config struct {
-	DatabaseURL      string
-	LogLevel         string
-	Debug            bool
-	ServiceName      string
-	Environment      string
-	Hostname         string
-	ServerPort       string
-	WorkerCount      int
-	BatchSize        int
-	JwtRefreshSecret string
-	JwtSecret        string
-	Port             string
-	AllowedOrigins   []string
-	GeminiAPIKeys    []string
+	DatabaseURL    string
+	LogLevel       string
+	Debug          bool
+	ServiceName    string
+	Environment    string
+	Hostname       string
+	ServerPort     string
+	WorkerCount    int
+	BatchSize      int
+	Port           string
+	AllowedOrigins []string
+	GeminiAPIKeys  []string
 }
 
 func LoadConfig() (*Config, error) {
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8000"
-	}
-	jwtRefreshSecret := os.Getenv("JWT_REFRESH_SECRET")
-	if jwtRefreshSecret == "" {
-		return nil, errors.New("JWT_REFRESH_SECRET is required")
-	}
-	jwtSecret := os.Getenv("JWT_SECRET")
-	if jwtSecret == "" {
-		return nil, errors.New("JWT_SECRET is required")
 	}
 	allowedOrigins := []string{"*"}
 	if ao := os.Getenv("ALLOWED_ORIGINS"); ao != "" {
@@ -116,19 +106,17 @@ func LoadConfig() (*Config, error) {
 	}
 
 	return &Config{
-		JwtRefreshSecret: jwtRefreshSecret,
-		JwtSecret:        jwtSecret,
-		Port:             port,
-		AllowedOrigins:   allowedOrigins,
-		DatabaseURL:      databaseUrl,
-		LogLevel:         logLevel,
-		Debug:            debug == "true",
-		ServiceName:      serviceName,
-		Hostname:         hostname,
-		Environment:      environment,
-		ServerPort:       serverPort,
-		WorkerCount:      workerCount,
-		BatchSize:        batchSize,
-		GeminiAPIKeys:    geminiAPIKeys,
+		Port:           port,
+		AllowedOrigins: allowedOrigins,
+		DatabaseURL:    databaseUrl,
+		LogLevel:       logLevel,
+		Debug:          debug == "true",
+		ServiceName:    serviceName,
+		Hostname:       hostname,
+		Environment:    environment,
+		ServerPort:     serverPort,
+		WorkerCount:    workerCount,
+		BatchSize:      batchSize,
+		GeminiAPIKeys:  geminiAPIKeys,
 	}, nil
 }

@@ -98,7 +98,7 @@ func LoadConfig() (*Config, error) {
 
 	serverPort := os.Getenv("SERVER_PORT")
 	if serverPort == "" {
-		serverPort = "8080"
+		serverPort = "8070"
 	}
 
 	workerCount := 10 // default value

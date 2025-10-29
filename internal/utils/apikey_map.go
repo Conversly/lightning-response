@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 
 	"github.com/Conversly/lightning-response/internal/loaders"
@@ -104,6 +105,12 @@ func (akm *ApiKeyManager) ValidateApiKeyAndDomain(apiKey string, domain string) 
 	// Check if domain exists and matches the API key
 	if info, exists := akm.domainMap[domain]; exists {
 		return info.APIKey == apiKey
+	}
+
+	// Allow localhost if the API key is valid
+	if domain == "localhost" || strings.HasPrefix(domain, "localhost:") {
+		_, exists := akm.apiKeyMap[apiKey]
+		return exists
 	}
 
 	return false

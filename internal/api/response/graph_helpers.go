@@ -56,6 +56,21 @@ func ValidateChatbotAccess(ctx context.Context, db *loaders.PostgresClient, conv
 
 	}
 	domain := extractHost(originURL)
+
+	// Special handling for localhost
+	if domain == "localhost" || strings.HasPrefix(domain, "localhost:") {
+		// For localhost, just validate the API key exists
+		chatbots, exists := utils.GetApiKeyManager().ValidateApiKey(converslyWebID)
+		if !exists {
+			return 0, fmt.Errorf("invalid api key for localhost domain")
+		}
+		// Return the first chatbot ID associated with this API key
+		for chatbotID := range chatbots {
+			return chatbotID, nil
+		}
+		return 0, fmt.Errorf("no chatbot found for api key")
+	}
+
 	domainInfo, exists := utils.GetApiKeyManager().ValidateDomain(domain)
 	if !exists || domainInfo.APIKey != converslyWebID {
 		return 0, fmt.Errorf("invalid api key and origin mapping for domain=%s", domain)

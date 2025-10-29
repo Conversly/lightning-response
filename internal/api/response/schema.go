@@ -16,17 +16,17 @@ type Request struct {
 	Mode      string      `json:"mode"` // default | thinking | deep thinking
 	User      RequestUser `json:"user"`
 	Metadata  RequestMeta `json:"metadata"`
-	ChatbotID int         `json:"chatbot_id"`
+	ChatbotID int         `json:"chatbotId"`
 }
 
 type RequestUser struct {
-	UniqueClientID string                 `json:"unique_client_id"`
-	ConverslyWebID string                 `json:"conversly_web_id"`
+	UniqueClientID string                 `json:"uniqueClientId"`
+	ConverslyWebID string                 `json:"converslyWebId"`
 	Metadata       map[string]interface{} `json:"metadata,omitempty"`
 }
 
 type RequestMeta struct {
-	OriginURL string `json:"origin_url"`
+	OriginURL string `json:"originUrl"`
 }
 
 // Response defines a minimal structured response payload

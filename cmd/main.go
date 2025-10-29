@@ -19,6 +19,22 @@ import (
 	"github.com/Conversly/lightning-response/internal/utils"
 )
 
+func CORSMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Writer.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
+		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE, PATCH")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, Authorization, accept, origin, Cache-Control")
+
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(204)
+			return
+		}
+
+		c.Next()
+	}
+}
+
 func main() {
 	err := godotenv.Load()
 	if err != nil {
@@ -34,7 +50,7 @@ func main() {
 	cleanup := utils.InitLogger(cfg)
 	defer cleanup()
 
-	utils.Zlog.Info("Starting application", 
+	utils.Zlog.Info("Starting application",
 		zap.String("service", cfg.ServiceName),
 		zap.String("environment", cfg.Environment),
 		zap.String("port", cfg.ServerPort))
@@ -55,6 +71,11 @@ func main() {
 	}
 
 	router := gin.New()
+
+	// Apply middleware in correct order: CORS first, then logger/recovery
+	router.Use(CORSMiddleware())
+	router.Use(gin.Logger())
+	router.Use(gin.Recovery())
 
 	routes.SetupRoutes(router, db, cfg)
 

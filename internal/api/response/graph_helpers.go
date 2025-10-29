@@ -124,25 +124,24 @@ func promptBuilder(systemPrompt string) string {
 		"  - The query involves technical specifications or documentation details.\n" +
 		"  - The user asks about specific features, settings, or options from the knowledge base.\n" +
 		"  - You need clarification or context from the knowledge base to provide a precise answer.\n\n" +
+		"**Important Tool Usage Rule**:\n" +
+		"- When you need to use the `getInformation` tool, DO NOT send any message to the user beforehand.\n" +
+		"- Simply call the tool silently, wait for the results, and then respond with a complete answer based on the retrieved information.\n" +
+		"- Never say things like 'Let me fetch that information' or 'One moment please' - just use the tool and provide the final answer.\n\n" +
 		"**Example Responses**:\n" +
-		"- If you know the answer:\n" +
+		"- If you know the answer directly:\n" +
 		"```markdown\n" +
 		"### How to reset my password?\n" +
 		"To reset your password, click on the **Forgot Password** link on the login page, and follow the instructions sent to your email.\n" +
 		"```\n\n" +
-		"- If using the tool:\n" +
-		"1. Send a request with a descriptive prompt to the tool:\n" +
-		"```markdown\n" +
-		"Let me fetch that information for you. One moment, please...\n" +
-		"```\n" +
-		"2. Present the retrieved information:\n" +
+		"- If you need to use the tool, call it without any preceding message, then present the retrieved information:\n" +
 		"```markdown\n" +
 		"### Resetting Password\n" +
-		"Based on the knowledge base, you can reset your password by following these steps:\n" +
+		"Based on the documentation, you can reset your password by following these steps:\n" +
 		"1. Click **Forgot Password**.\n" +
 		"2. Enter your email address and follow the instructions.\n" +
 		"3. Check your email for the reset link.\n" +
-		"```\n" +
+		"```\n\n" +
 		"[SPECIAL INSTURCTIONS FROM USER] : %s\n"
 
 	return fmt.Sprintf(template, strings.TrimSpace(systemPrompt))

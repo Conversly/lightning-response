@@ -151,12 +151,6 @@ func (c *PostgresClient) BatchInsertMessages(ctx context.Context, rows []Message
 		return nil
 	}
 
-	tx, err := c.pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback(ctx)
-
 	query := `
         INSERT INTO messages (
             chatbot_id, citations, "type", content, created_at, unique_conv_id
@@ -165,7 +159,7 @@ func (c *PostgresClient) BatchInsertMessages(ctx context.Context, rows []Message
 
 	successCount := 0
 	for _, r := range rows {
-		_, err := tx.Exec(ctx, query,
+		_, err := c.pool.Exec(ctx, query,
 			r.ChatbotID,
 			r.Citations,
 			r.Type,
@@ -184,9 +178,6 @@ func (c *PostgresClient) BatchInsertMessages(ctx context.Context, rows []Message
 		return fmt.Errorf("failed to insert any messages")
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("failed to commit messages transaction: %w", err)
-	}
 	return nil
 }
 
@@ -195,12 +186,6 @@ func (c *PostgresClient) BatchInsertEmbeddings(ctx context.Context, userID, chat
 	if len(chunks) == 0 {
 		return nil
 	}
-
-	tx, err := c.pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback(ctx)
 
 	query := `
 		INSERT INTO embeddings (
@@ -220,7 +205,7 @@ func (c *PostgresClient) BatchInsertEmbeddings(ctx context.Context, userID, chat
 		}
 		vec := pgvector.NewVector(vec32)
 
-		_, err := tx.Exec(ctx, query,
+		_, err := c.pool.Exec(ctx, query,
 			userID,
 			chatbotID,
 			chunk.Text,
@@ -241,10 +226,6 @@ func (c *PostgresClient) BatchInsertEmbeddings(ctx context.Context, userID, chat
 		return fmt.Errorf("failed to insert any embeddings")
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
-	}
-
 	log.Printf("Successfully inserted %d/%d embeddings", successCount, len(chunks))
 	return nil
 }
@@ -255,12 +236,6 @@ func (c *PostgresClient) UpdateDataSourceStatus(ctx context.Context, dataSourceI
 		return nil
 	}
 
-	tx, err := c.pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback(ctx)
-
 	query := `
 		UPDATE data_source 
 		SET status = $1, updated_at = $2
@@ -268,13 +243,9 @@ func (c *PostgresClient) UpdateDataSourceStatus(ctx context.Context, dataSourceI
 	`
 
 	now := formatTimeForDB(time.Now().UTC())
-	result, err := tx.Exec(ctx, query, status, now, dataSourceIDs)
+	result, err := c.pool.Exec(ctx, query, status, now, dataSourceIDs)
 	if err != nil {
 		return fmt.Errorf("failed to update data source status: %w", err)
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	rowsAffected := result.RowsAffected()

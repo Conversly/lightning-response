@@ -26,7 +26,7 @@ type Config struct {
 func LoadConfig() (*Config, error) {
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8080"
+		port = "8000"
 	}
 	jwtRefreshSecret := os.Getenv("JWT_REFRESH_SECRET")
 	if jwtRefreshSecret == "" {

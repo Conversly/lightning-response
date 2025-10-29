@@ -38,5 +38,8 @@ COPY --from=builder /conversly .
 # Create cmd directory and ensure proper permissions
 RUN mkdir -p /app/cmd && chmod +x ./conversly
 
+# Document/listen port for platform proxies (e.g., Dokku)
+EXPOSE 8000
+
 # Command to run the executable
 CMD ["./conversly"]

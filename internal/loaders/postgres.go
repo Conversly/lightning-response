@@ -6,7 +6,9 @@ import (
 	"log"
 	"time"
 
-	"github.com/jackc/pgx/v4/pgxpool"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/pgvector/pgvector-go"
+	pgxvec "github.com/pgvector/pgvector-go/pgx"
 )
 
 type PostgresClient struct {
@@ -75,7 +77,7 @@ func (c *PostgresClient) createConnectionPool(workerCount, batchSize int) (*pgxp
 	cfg.MaxConnIdleTime = 15 * time.Minute
 
 	log.Printf("Creating Postgres connection pool with MaxConns=%d", cfg.MaxConns)
-	pool, err := pgxpool.ConnectConfig(context.Background(), cfg)
+	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
 	if err != nil {
 		log.Printf("Failed to create pgx pool: %v", err)
 		return nil, fmt.Errorf("failed to create pgx pool: %w", err)
@@ -88,6 +90,31 @@ func (c *PostgresClient) createConnectionPool(workerCount, batchSize int) (*pgxp
 		log.Printf("Failed to ping Postgres: %v", err)
 		pool.Close()
 		return nil, fmt.Errorf("failed to ping Postgres: %w", err)
+	}
+
+	// Enable pgvector extension
+	log.Println("Enabling pgvector extension")
+	_, err = pool.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS vector")
+	if err != nil {
+		log.Printf("Warning: Failed to enable pgvector extension: %v", err)
+		// Don't fail here as the extension might already be enabled or user may lack permissions
+	}
+
+	// Register pgvector types with the connection pool
+	log.Println("Registering pgvector types")
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		log.Printf("Failed to acquire connection for type registration: %v", err)
+		pool.Close()
+		return nil, fmt.Errorf("failed to acquire connection: %w", err)
+	}
+	defer conn.Release()
+
+	err = pgxvec.RegisterTypes(ctx, conn.Conn())
+	if err != nil {
+		log.Printf("Failed to register pgvector types: %v", err)
+		pool.Close()
+		return nil, fmt.Errorf("failed to register pgvector types: %w", err)
 	}
 
 	log.Println("Postgres connection pool established successfully")
@@ -186,11 +213,18 @@ func (c *PostgresClient) BatchInsertEmbeddings(ctx context.Context, userID, chat
 	successCount := 0
 
 	for _, chunk := range chunks {
+		// Convert []float64 to []float32 for pgvector
+		vec32 := make([]float32, len(chunk.Vector))
+		for i, v := range chunk.Vector {
+			vec32[i] = float32(v)
+		}
+		vec := pgvector.NewVector(vec32)
+
 		_, err := tx.Exec(ctx, query,
 			userID,
 			chatbotID,
 			chunk.Text,
-			chunk.Vector,
+			vec,
 			now,
 			now,
 			chunk.DataSourceID,
@@ -305,25 +339,26 @@ func (c *PostgresClient) GetChatbotInfo(ctx context.Context, chatbotID int) (*Ch
 
 // SearchEmbeddings searches for similar embeddings using vector similarity
 func (c *PostgresClient) SearchEmbeddings(ctx context.Context, chatbotID string, queryVector []float64, topK int) ([]EmbeddingResult, error) {
-	// Format embedding as vector string for PostgreSQL
-	vectorStr := "["
-	for i, val := range queryVector {
-		if i > 0 {
-			vectorStr += ","
-		}
-		vectorStr += fmt.Sprintf("%f", val)
+	// Convert queryVector from []float64 to []float32 for pgvector
+	vec32 := make([]float32, len(queryVector))
+	for i, v := range queryVector {
+		vec32[i] = float32(v)
 	}
-	vectorStr += "]"
+	vec := pgvector.NewVector(vec32)
 
+	log.Printf("Searching embeddings for chatbot_id=%s with topK=%d and vector_dim=%d", chatbotID, topK, len(queryVector))
+
+	// Use cosine distance operator for better semantic search
+	// <=> is cosine distance, <-> is L2 distance, <#> is inner product
 	query := `
-		SELECT text, citation
-		FROM embeddings 
-		WHERE chatbot_id = $1
-		ORDER BY vector <=> $2::vector
-		LIMIT $3
-	`
+        SELECT text, citation
+        FROM embeddings 
+        WHERE chatbot_id = $1
+        ORDER BY vector <=> $2
+        LIMIT $3
+    `
 
-	rows, err := c.pool.Query(ctx, query, chatbotID, vectorStr, topK)
+	rows, err := c.pool.Query(ctx, query, chatbotID, vec, topK)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query embeddings: %w", err)
 	}

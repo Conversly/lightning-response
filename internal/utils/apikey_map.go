@@ -63,7 +63,7 @@ func (akm *ApiKeyManager) LoadFromDatabase(ctx context.Context, pgClient *loader
 			UserID:    record.UserID,
 		}
 
-		Zlog.Sugar().Infof("Loaded origin domain: APIKey=%s, ChatbotID=%d, Domain=%s", record.APIKey, record.ChatbotID, record.Domain)
+		// Zlog.Infof("Loaded origin domain: APIKey=%s, ChatbotID=%d, Domain=%s", record.APIKey, record.ChatbotID, record.Domain)
 
 		loadedCount++
 	}

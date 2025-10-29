@@ -1,0 +1,28 @@
+name: Dev Deployment
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - id: deploy
+        name: Deploy to dokku
+        uses: idoberko2/dokku-deploy-github-action@v1.0.1
+        with:
+          ssh-private-key: ${{ secrets.DEV_SSH_PRIVATE_KEY_V1 }}
+          dokku-host: "207.180.240.194"
+          ssh-port: "22"
+          app-name: "lightning-response"
+          git-push-flags: "--force"

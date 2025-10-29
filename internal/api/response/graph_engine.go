@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 	"go.uber.org/zap"
@@ -12,7 +13,6 @@ import (
 	"github.com/Conversly/lightning-response/internal/embedder"
 	"github.com/Conversly/lightning-response/internal/llm"
 	"github.com/Conversly/lightning-response/internal/loaders"
-	"github.com/Conversly/lightning-response/internal/rag"
 	"github.com/Conversly/lightning-response/internal/utils"
 )
 
@@ -53,8 +53,14 @@ func BuildChatbotGraph(ctx context.Context, cfg *ChatbotConfig, deps *GraphDepen
 	temp := cfg.Temperature
 	maxToks := cfg.MaxTokens
 
+	// Get enabled tools for this chatbot
+	enabledTools, err := GetEnabledTools(ctx, cfg, deps)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get enabled tools: %w", err)
+	}
+
 	// Create multi-key chat model with round-robin rotation
-	chatModel, err := llm.NewMultiKeyChatModel(
+	baseChatModel, err := llm.NewMultiKeyChatModel(
 		ctx,
 		cfg.GeminiAPIKeys,
 		cfg.Model,
@@ -68,7 +74,8 @@ func BuildChatbotGraph(ctx context.Context, cfg *ChatbotConfig, deps *GraphDepen
 	utils.Zlog.Info("Created multi-key Gemini chat model",
 		zap.String("chatbot_id", cfg.ChatbotID),
 		zap.String("model", cfg.Model),
-		zap.Int("key_count", len(cfg.GeminiAPIKeys)))
+		zap.Int("key_count", len(cfg.GeminiAPIKeys)),
+		zap.Int("tool_count", len(enabledTools)))
 
 	graph := compose.NewGraph[[]*schema.Message, *schema.Message](
 		compose.WithGenLocalState(func(ctx context.Context) *GraphState {
@@ -84,64 +91,39 @@ func BuildChatbotGraph(ctx context.Context, cfg *ChatbotConfig, deps *GraphDepen
 		}),
 	)
 
+	// Prepare chat model with tools if available
+	hasTools := len(enabledTools) > 0
+
+	if hasTools {
+		// Extract tool info from tools and bind to model
+		toolInfos := make([]*schema.ToolInfo, 0, len(enabledTools))
+		for _, t := range enabledTools {
+			info, err := t.Info(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get tool info: %w", err)
+			}
+			toolInfos = append(toolInfos, info)
+		}
+
+		// Bind tools to model using BindTools
+		if err := baseChatModel.BindTools(toolInfos); err != nil {
+			return nil, fmt.Errorf("failed to bind tools to model: %w", err)
+		}
+
+		utils.Zlog.Info("Bound tools to chat model",
+			zap.String("chatbot_id", cfg.ChatbotID),
+			zap.Int("tool_count", len(toolInfos)))
+	}
+
 	// Add ChatModel node with state handlers
-	graph.AddChatModelNode("model", chatModel,
+	graph.AddChatModelNode("model", baseChatModel,
 		compose.WithStatePreHandler(func(ctx context.Context, input []*schema.Message, state *GraphState) ([]*schema.Message, error) {
 			// Update state with incoming messages
 			state.Messages = append(state.Messages, input...)
 
-			// If RAG is enabled, retrieve documents and capture citations into state
-			ragEnabled := false
-			for _, tool := range cfg.ToolConfigs {
-				if tool == "rag" {
-					ragEnabled = true
-					break
-				}
-			}
-
-			if ragEnabled {
-				// Create retriever for this request
-				retriever := rag.NewPgVectorRetriever(
-					deps.DB,
-					deps.Embedder,
-					cfg.ChatbotID,
-					int(cfg.TopK),
-				)
-
-				// Get last user message content
-				var query string
-				for i := len(state.Messages) - 1; i >= 0; i-- {
-					if state.Messages[i] != nil && state.Messages[i].Content != "" {
-						query = state.Messages[i].Content
-						break
-					}
-				}
-
-				if query != "" {
-					results, rerr := retriever.Retrieve(ctx, query)
-					if rerr != nil {
-						utils.Zlog.Warn("RAG retrieval failed; continuing without citations",
-							zap.String("chatbot_id", cfg.ChatbotID),
-							zap.Error(rerr))
-					} else {
-						citations := make([]string, 0, len(results))
-						for _, res := range results {
-							if res.Citation != nil && *res.Citation != "" {
-								citations = append(citations, *res.Citation)
-							}
-						}
-						state.Citations = citations
-						utils.Zlog.Debug("Captured citations from RAG",
-							zap.String("chatbot_id", cfg.ChatbotID),
-							zap.Int("citations", len(state.Citations)))
-					}
-				}
-			}
-
 			// Prepare messages with system prompt at the beginning
 			finalMessages := make([]*schema.Message, 0, len(state.Messages)+1)
 
-			// Add system message with built prompt at the start
 			systemPromptContent := promptBuilder(cfg.SystemPrompt)
 			finalMessages = append(finalMessages, schema.SystemMessage(systemPromptContent))
 
@@ -154,24 +136,105 @@ func BuildChatbotGraph(ctx context.Context, cfg *ChatbotConfig, deps *GraphDepen
 			return finalMessages, nil
 		}),
 		compose.WithStatePostHandler(func(ctx context.Context, output *schema.Message, state *GraphState) (*schema.Message, error) {
-			if len(state.Citations) > 0 {
-				// Append structured citations suffix so caller can parse and strip
-				suffixBytes, _ := json.Marshal(state.Citations)
-				output.Content = output.Content + "\n\n<<<CITATIONS>>>" + string(suffixBytes) + "<<<END>>>"
-			}
+			// Store assistant message in state
+			state.Messages = append(state.Messages, output)
 			return output, nil
 		}),
 	)
 
-	// Direct flow (model only) for now
-	graph.AddEdge(compose.START, "model")
-	graph.AddEdge("model", compose.END)
+	if hasTools {
+		// Create ToolsNode - convert InvokableTool to BaseTool
+		baseTools := make([]tool.BaseTool, len(enabledTools))
+		for i, t := range enabledTools {
+			baseTools[i] = t
+		}
 
-	utils.Zlog.Info("Built graph without tools",
-		zap.String("chatbot_id", cfg.ChatbotID))
+		toolsNode, err := compose.NewToolNode(ctx, &compose.ToolsNodeConfig{
+			Tools: baseTools,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create tools node: %w", err)
+		}
+
+		// Add ToolsNode with state handlers
+		graph.AddToolsNode("tools", toolsNode,
+			compose.WithStatePreHandler(func(ctx context.Context, input *schema.Message, state *GraphState) (*schema.Message, error) {
+				state.ToolCallCount++
+				utils.Zlog.Info("Executing tool calls",
+					zap.String("chatbot_id", cfg.ChatbotID),
+					zap.Int("tool_call_count", state.ToolCallCount),
+					zap.Int("num_calls", len(input.ToolCalls)))
+				return input, nil
+			}),
+			compose.WithStatePostHandler(func(ctx context.Context, output []*schema.Message, state *GraphState) ([]*schema.Message, error) {
+				// Extract citations from RAG tool responses
+				for _, msg := range output {
+					if msg.ToolCallID != "" {
+						// Parse RAG tool output for citations
+						var ragOutput struct {
+							Citations []string `json:"citations"`
+						}
+						if err := json.Unmarshal([]byte(msg.Content), &ragOutput); err == nil {
+							if len(ragOutput.Citations) > 0 {
+								state.Citations = append(state.Citations, ragOutput.Citations...)
+								utils.Zlog.Debug("Captured citations from RAG tool",
+									zap.String("chatbot_id", cfg.ChatbotID),
+									zap.Int("citations", len(ragOutput.Citations)))
+							}
+						}
+					}
+				}
+				// Store tool messages in state
+				state.Messages = append(state.Messages, output...)
+				return output, nil
+			}),
+		)
+
+		// Define routing logic
+		graph.AddEdge(compose.START, "model")
+
+		// Create a routing branch from model
+		// The condition function receives the output from the model node
+		routeBranch := compose.NewGraphBranch(
+			func(ctx context.Context, msg *schema.Message) (endNode string, err error) {
+				// Check if the message has tool calls
+				if msg != nil && msg.Role == schema.Assistant && len(msg.ToolCalls) > 0 {
+					utils.Zlog.Debug("Model requested tool calls, routing to tools node",
+						zap.String("chatbot_id", cfg.ChatbotID),
+						zap.Int("tool_calls", len(msg.ToolCalls)))
+					return "tools", nil
+				}
+
+				// No tool calls, end the conversation
+				return compose.END, nil
+			},
+			map[string]bool{
+				"tools":     true,
+				compose.END: true,
+			},
+		)
+
+		graph.AddBranch("model", routeBranch)
+
+		// After tools execute, go back to model
+		graph.AddEdge("tools", "model")
+
+		utils.Zlog.Info("Built graph with tools",
+			zap.String("chatbot_id", cfg.ChatbotID),
+			zap.Int("tool_count", len(enabledTools)))
+	} else {
+		// Direct flow (model only) when no tools
+		graph.AddEdge(compose.START, "model")
+		graph.AddEdge("model", compose.END)
+
+		utils.Zlog.Info("Built graph without tools",
+			zap.String("chatbot_id", cfg.ChatbotID))
+	}
 
 	// Compile the graph
-	compiled, err := graph.Compile(ctx)
+	compiled, err := graph.Compile(ctx,
+		compose.WithMaxRunSteps(10), // Limit iterations to prevent infinite loops
+	)
 	if err != nil {
 		return nil, fmt.Errorf("graph compilation failed: %w", err)
 	}

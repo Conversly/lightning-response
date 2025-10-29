@@ -24,7 +24,7 @@ type Config struct {
 func LoadConfig() (*Config, error) {
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8000"
+		port = "8030"
 	}
 	allowedOrigins := []string{"*"}
 	if ao := os.Getenv("ALLOWED_ORIGINS"); ao != "" {
@@ -88,7 +88,7 @@ func LoadConfig() (*Config, error) {
 
 	serverPort := os.Getenv("SERVER_PORT")
 	if serverPort == "" {
-		serverPort = "8070"
+		serverPort = "8030"
 	}
 
 	workerCount := 10 // default value

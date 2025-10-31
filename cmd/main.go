@@ -19,12 +19,56 @@ import (
 	"github.com/Conversly/lightning-response/internal/utils"
 )
 
+// func CORSMiddleware() gin.HandlerFunc {
+// 	// List of allowed origins
+// 	allowedOrigins := []string{
+// 		"http://localhost:3000",
+// 		"http://localhost:5173",
+// 	}
+
+// 	return func(c *gin.Context) {
+// 		origin := c.Request.Header.Get("Origin")
+
+// 		// Check if the origin is in the allowed list
+// 		for _, allowedOrigin := range allowedOrigins {
+// 			if origin == allowedOrigin {
+// 				c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
+// 				break
+// 			}
+// 		}
+
+// 		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+// 		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE, PATCH")
+// 		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, Authorization, accept, origin, Cache-Control")
+
+// 		if c.Request.Method == "OPTIONS" {
+// 			c.AbortWithStatus(204)
+// 			return
+// 		}
+
+// 		c.Next()
+// 	}
+// }
+
 func CORSMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
+		// Reflect the request's Origin to allow all origins with credentials
+		origin := c.Request.Header.Get("Origin")
+		if origin != "" {
+			c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
+			c.Writer.Header().Add("Vary", "Origin")
+		}
+
 		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE, PATCH")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, Authorization, accept, origin, Cache-Control")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS")
+
+		// Echo back requested headers if provided; otherwise allow a safe default set
+		reqHeaders := c.Request.Header.Get("Access-Control-Request-Headers")
+		if reqHeaders != "" {
+			c.Writer.Header().Set("Access-Control-Allow-Headers", reqHeaders)
+		} else {
+			c.Writer.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Accept, Origin, Cache-Control, X-Requested-With, Accept-Encoding, Content-Length")
+		}
 
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)

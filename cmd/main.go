@@ -110,6 +110,9 @@ func main() {
 		}
 	}()
 
+	// Start periodic refresh of API key/domain mappings every 2 minutes
+	utils.GetApiKeyManager().StartAutoRefresh(context.Background(), db, 2*time.Minute)
+
 	if cfg.Environment == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
@@ -144,6 +147,9 @@ func main() {
 	<-quit
 
 	utils.Zlog.Info("Shutting down server...")
+
+	// Stop background refreshers
+	utils.GetApiKeyManager().StopAutoRefresh()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

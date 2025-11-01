@@ -53,7 +53,7 @@ func (s *GraphService) BuildAndRunGraph(ctx context.Context, req *Request) (*Res
 		zap.String("web_id", req.User.ConverslyWebID),
 		zap.String("client_id", req.User.UniqueClientID))
 
-	chatbotID, err := ValidateChatbotAccess(ctx, s.db, req.User.ConverslyWebID, req.Metadata.OriginURL)
+	chatbotID, err := ValidateChatbotAccess(ctx, req.User.ConverslyWebID, req.Metadata.OriginURL)
 	if err != nil {
 		return errorResponse(fmt.Errorf("chatbot validation failed: %w", err))
 	}

@@ -7,7 +7,6 @@ import (
 
 	"context"
 
-	"github.com/Conversly/lightning-response/internal/loaders"
 	"github.com/Conversly/lightning-response/internal/utils"
 	"github.com/cloudwego/eino/schema"
 )
@@ -51,10 +50,7 @@ func ParseConversationMessages(queryJSON string) ([]*schema.Message, error) {
 	return messages, nil
 }
 
-func ValidateChatbotAccess(ctx context.Context, db *loaders.PostgresClient, converslyWebID string, originURL string) (int, error) {
-	if err := utils.GetApiKeyManager().LoadFromDatabase(ctx, db); err != nil {
-
-	}
+func ValidateChatbotAccess(ctx context.Context, converslyWebID string, originURL string) (int, error) {
 	domain := extractHost(originURL)
 
 	// Special handling for localhost

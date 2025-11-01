@@ -6,6 +6,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Conversly/lightning-response/internal/loaders"
 )
@@ -14,6 +15,9 @@ type ApiKeyManager struct {
 	mu        sync.RWMutex
 	apiKeyMap map[string]map[int][]string
 	domainMap map[string]DomainInfo
+
+	// controls background refresh lifecycle
+	refreshCancel context.CancelFunc
 }
 
 type DomainInfo struct {
@@ -174,4 +178,57 @@ func (akm *ApiKeyManager) DebugInfo() {
 		}
 		count++
 	}
+}
+
+// StartAutoRefresh starts a background goroutine that reloads API keys/domains
+// from the database at the specified interval. It performs an immediate load
+// and then continues refreshing until StopAutoRefresh is called or the context
+// is cancelled. Safe to call multiple times; subsequent calls are no-ops while
+// a refresher is already running.
+func (akm *ApiKeyManager) StartAutoRefresh(ctx context.Context, pgClient *loaders.PostgresClient, interval time.Duration) {
+	akm.mu.Lock()
+	if akm.refreshCancel != nil {
+		// already running
+		akm.mu.Unlock()
+		return
+	}
+	refreshCtx, cancel := context.WithCancel(ctx)
+	akm.refreshCancel = cancel
+	akm.mu.Unlock()
+
+	go func() {
+		// initial load with timeout
+		func() {
+			loadCtx, loadCancel := context.WithTimeout(refreshCtx, 15*time.Second)
+			defer loadCancel()
+			if err := akm.LoadFromDatabase(loadCtx, pgClient); err != nil {
+				log.Printf("ApiKeyManager initial load failed: %v", err)
+			}
+		}()
+
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-refreshCtx.Done():
+				return
+			case <-ticker.C:
+				loadCtx, loadCancel := context.WithTimeout(refreshCtx, 15*time.Second)
+				if err := akm.LoadFromDatabase(loadCtx, pgClient); err != nil {
+					log.Printf("ApiKeyManager periodic refresh failed: %v", err)
+				}
+				loadCancel()
+			}
+		}
+	}()
+}
+
+// StopAutoRefresh stops the background refresh goroutine if running.
+func (akm *ApiKeyManager) StopAutoRefresh() {
+	akm.mu.Lock()
+	if akm.refreshCancel != nil {
+		akm.refreshCancel()
+		akm.refreshCancel = nil
+	}
+	akm.mu.Unlock()
 }

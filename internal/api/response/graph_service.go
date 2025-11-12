@@ -9,6 +9,7 @@ import (
 
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 
 	"github.com/Conversly/lightning-response/internal/config"
@@ -93,29 +94,41 @@ func (s *GraphService) BuildAndRunGraph(ctx context.Context, req *Request) (*Res
 		return errorResponse(fmt.Errorf("graph execution failed: %w", err))
 	}
 
-	// Step 6: Build response
+	assistantUUID, err := uuid.NewV7()
+	if err != nil {
+		return errorResponse(fmt.Errorf("failed to generate assistant message id: %w", err))
+	}
+	assistantMsgID := assistantUUID.String()
 	response := &Response{
 		Response:  result.Content,
 		Citations: citations,
 		Success:   true,
+		MessageID: assistantMsgID,
 	}
 
 	// Step 7: Save messages in background (non-blocking)
 	go func() {
 		saveCtx := context.Background()
-
+		userUUID, err := uuid.NewV7()
+		if err != nil {
+			utils.Zlog.Error("Failed to generate user message id", zap.Error(err))
+			return
+		}
+		userMsgID := userUUID.String()
 		if err := SaveConversationMessagesBackground(saveCtx, s.db, MessageRecord{
 			UniqueClientID: req.User.UniqueClientID,
 			ChatbotID:      info.ID,
 			Message:        ExtractLastUserContent(req.Query),
 			Role:           "user",
 			Citations:      []string{},
+			MessageUID:     userMsgID,
 		}, MessageRecord{
 			UniqueClientID: req.User.UniqueClientID,
 			ChatbotID:      info.ID,
 			Message:        response.Response,
 			Role:           "assistant",
 			Citations:      response.Citations,
+			MessageUID:     assistantMsgID,
 		}); err != nil {
 			utils.Zlog.Error("Failed to save messages in background", zap.Error(err))
 		}
@@ -154,6 +167,105 @@ func (s *GraphService) invokeGraph(
 		zap.Int("citations", len(citations)))
 
 	return result, citations, nil
+}
+
+// BuildAndRunPlaygroundGraph executes the graph for playground requests (no validation)
+func (s *GraphService) BuildAndRunPlaygroundGraph(ctx context.Context, req *PlaygroundRequest) (*Response, error) {
+	startTime := time.Now()
+
+	utils.Zlog.Info("Processing playground request with graph",
+		zap.Int("chatbot_id", req.Chatbot.ChatbotId),
+		zap.String("client_id", req.User.UniqueClientID))
+
+	// Use playground chatbot configuration directly (no validation or DB fetch)
+	cfg := &ChatbotConfig{
+		ChatbotID:     fmt.Sprintf("%d", req.Chatbot.ChatbotId),
+		SystemPrompt:  req.Chatbot.ChatbotSystemPrompt,
+		Temperature:   float32(req.Chatbot.ChatbotTemperature),
+		Model:         req.Chatbot.ChatbotModel,
+		MaxTokens:     1024,
+		TopK:          5,
+		ToolConfigs:   []string{"rag"},
+		GeminiAPIKeys: s.cfg.GeminiAPIKeys,
+	}
+
+	// Set default model if not provided
+	if cfg.Model == "" {
+		cfg.Model = "gemini-2.0-flash-exp"
+	}
+
+	// Set default temperature if not provided
+	if cfg.Temperature == 0 {
+		cfg.Temperature = 0.7
+	}
+
+	deps := &GraphDependencies{
+		DB:       s.db,
+		Embedder: s.embedder,
+	}
+
+	compiledGraph, err := BuildChatbotGraph(ctx, cfg, deps)
+	if err != nil {
+		return errorResponse(fmt.Errorf("failed to build chatbot graph: %w", err))
+	}
+
+	messages, err := ParseConversationMessages(req.Query)
+	if err != nil {
+		return errorResponse(fmt.Errorf("failed to parse conversation: %w", err))
+	}
+
+	result, citations, err := s.invokeGraph(ctx, compiledGraph, messages, cfg)
+	if err != nil {
+		return errorResponse(fmt.Errorf("graph execution failed: %w", err))
+	}
+
+	assistantUUID, err := uuid.NewV7()
+	if err != nil {
+		return errorResponse(fmt.Errorf("failed to generate assistant message id: %w", err))
+	}
+	assistantMsgID := assistantUUID.String()
+	response := &Response{
+		Response:  result.Content,
+		Citations: citations,
+		Success:   true,
+		MessageID: assistantMsgID,
+	}
+
+	// Save messages in background (non-blocking)
+	go func() {
+		saveCtx := context.Background()
+		userUUID, err := uuid.NewV7()
+		if err != nil {
+			utils.Zlog.Error("Failed to generate user message id", zap.Error(err))
+			return
+		}
+		userMsgID := userUUID.String()
+		if err := SaveConversationMessagesBackground(saveCtx, s.db, MessageRecord{
+			UniqueClientID: req.User.UniqueClientID,
+			ChatbotID:      req.Chatbot.ChatbotId,
+			Message:        ExtractLastUserContent(req.Query),
+			Role:           "user",
+			Citations:      []string{},
+			MessageUID:     userMsgID,
+		}, MessageRecord{
+			UniqueClientID: req.User.UniqueClientID,
+			ChatbotID:      req.Chatbot.ChatbotId,
+			Message:        response.Response,
+			Role:           "assistant",
+			Citations:      response.Citations,
+			MessageUID:     assistantMsgID,
+		}); err != nil {
+			utils.Zlog.Error("Failed to save playground messages in background", zap.Error(err))
+		}
+	}()
+
+	latencyMS := time.Since(startTime).Milliseconds()
+	utils.Zlog.Info("Playground request completed",
+		zap.String("chatbot_id", cfg.ChatbotID),
+		zap.Int64("latency_ms", latencyMS),
+		zap.Bool("success", response.Success))
+
+	return response, nil
 }
 
 // extractCitations extracts citation URLs from the message

@@ -7,8 +7,8 @@ toolchain go1.24.4
 require (
 	github.com/cloudwego/eino v0.5.7
 	github.com/cloudwego/eino-ext/components/model/gemini v0.1.10
-	github.com/gin-contrib/cors v1.7.6
 	github.com/gin-gonic/gin v1.11.0
+	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.7.6
 	github.com/joho/godotenv v1.5.1
 	github.com/pgvector/pgvector-go v0.3.0

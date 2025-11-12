@@ -52,3 +52,39 @@ func (c *Controller) Respond(ctx *gin.Context) {
 
 	ctx.JSON(http.StatusOK, result)
 }
+
+func (c *Controller) PlaygroundResponse(ctx *gin.Context) {
+	var req PlaygroundRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.Zlog.Warn("invalid /playground/response payload", zap.Error(err))
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"error":     "bad_request",
+			"message":   err.Error(),
+			"timestamp": time.Now().UTC(),
+		})
+		return
+	}
+
+	var result *Response
+	var err error
+
+	result, err = c.graphService.BuildAndRunPlaygroundGraph(ctx.Request.Context(), &req)
+	if err != nil {
+		utils.Zlog.Error("playground graph execution failed", zap.Error(err))
+		ctx.JSON(http.StatusInternalServerError, gin.H{
+			"error":     "internal_error",
+			"message":   err.Error(),
+			"timestamp": time.Now().UTC(),
+		})
+		return
+	}
+
+	// Attach request id if available
+	if idVal, exists := ctx.Get("request_id"); exists {
+		if rid, ok := idVal.(string); ok {
+			result.RequestID = rid
+		}
+	}
+
+	ctx.JSON(http.StatusOK, result)
+}

@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"github.com/Conversly/lightning-response/internal/api/feedback"
 	"github.com/Conversly/lightning-response/internal/api/response"
 	"github.com/Conversly/lightning-response/internal/config"
 	"github.com/Conversly/lightning-response/internal/loaders"
@@ -13,5 +14,6 @@ func SetupRoutes(router *gin.Engine, db *loaders.PostgresClient, cfg *config.Con
 	// Setup route groups
 	SetupHealthRoutes(router, db)
 	response.RegisterRoutes(router, db, cfg)
+	feedback.RegisterRoutes(router, db, cfg)
 	Setup404Handler(router)
 }

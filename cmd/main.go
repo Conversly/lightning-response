@@ -15,6 +15,7 @@ import (
 
 	"github.com/Conversly/lightning-response/internal/config"
 	"github.com/Conversly/lightning-response/internal/loaders"
+	"github.com/Conversly/lightning-response/internal/middleware"
 	"github.com/Conversly/lightning-response/internal/routes"
 	"github.com/Conversly/lightning-response/internal/utils"
 )
@@ -121,6 +122,7 @@ func main() {
 
 	// Apply middleware in correct order: CORS first, then logger/recovery
 	router.Use(CORSMiddleware())
+	router.Use(middleware.RequestID())
 	router.Use(gin.Logger())
 	router.Use(gin.Recovery())
 

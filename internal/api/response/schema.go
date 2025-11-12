@@ -11,6 +11,21 @@ package response
 //   { "role": "assistant", "content": "Why did the computer show up at work late? It had a hard drive." }
 // ]
 
+type PlaygroundChatbot struct {
+	ChatbotId           int     `json:"chatbotId"`
+	ChatbotSystemPrompt string  `json:"chatbotSystemPrompt"`
+	ChatbotModel        string  `json:"chatbotModel"`
+	ChatbotTemperature  float64 `json:"chatbotTemperature"`
+}
+
+type PlaygroundRequest struct {
+	Query     string            `json:"query"`
+	Mode      string            `json:"mode"` // default | thinking | deep thinking
+	Chatbot   PlaygroundChatbot `json:"chatbot"`
+	ChatbotId int               `json:"chatbotId"`
+	User      RequestUser       `json:"user"`
+}
+
 type Request struct {
 	Query     string      `json:"query"`
 	Mode      string      `json:"mode"` // default | thinking | deep thinking
@@ -33,6 +48,7 @@ type RequestMeta struct {
 // This matches the format specified in docs/new_flow.md
 type Response struct {
 	RequestID string   `json:"request_id,omitempty"`
+	MessageID string   `json:"message_id,omitempty"`
 	Response  string   `json:"response"`
 	Citations []string `json:"citations"`
 	Success   bool     `json:"success"`

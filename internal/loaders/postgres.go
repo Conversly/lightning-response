@@ -137,6 +137,7 @@ func formatTimeForDB(t time.Time) string {
 }
 
 type MessageRow struct {
+	UniqueMsgID  string
 	ChatbotID    int
 	Citations    []string
 	Type         string
@@ -153,13 +154,14 @@ func (c *PostgresClient) BatchInsertMessages(ctx context.Context, rows []Message
 
 	query := `
         INSERT INTO messages (
-            chatbot_id, citations, "type", content, created_at, unique_conv_id
-        ) VALUES ($1, $2, $3, $4, $5, $6)
+            id, chatbot_id, citations, "type", content, created_at, unique_conv_id
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
     `
 
 	successCount := 0
 	for _, r := range rows {
 		_, err := c.pool.Exec(ctx, query,
+			r.UniqueMsgID,
 			r.ChatbotID,
 			r.Citations,
 			r.Type,
@@ -178,6 +180,24 @@ func (c *PostgresClient) BatchInsertMessages(ctx context.Context, rows []Message
 		return fmt.Errorf("failed to insert any messages")
 	}
 
+	return nil
+}
+
+func (c *PostgresClient) UpdateMessageFeedback(ctx context.Context, chatbotID int, uniqueMsgID string, feedback int16, comment *string) error {
+	if uniqueMsgID == "" {
+		return fmt.Errorf("unique message id is required")
+	}
+
+	query := `
+        UPDATE messages
+        SET feedback = $1, feedback_comment = $2
+        WHERE id = $3 AND chatbot_id = $4
+    `
+
+	_, err := c.pool.Exec(ctx, query, feedback, comment, uniqueMsgID, chatbotID)
+	if err != nil {
+		return fmt.Errorf("failed to update message feedback: %w", err)
+	}
 	return nil
 }
 

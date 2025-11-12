@@ -26,4 +26,5 @@ func RegisterRoutes(router *gin.Engine, db *loaders.PostgresClient, cfg *config.
 	// Controller
 	ctrl := NewController(svc)
 	router.POST("/response", ctrl.Respond)
+	router.POST("/playground/response", ctrl.PlaygroundResponse)
 }

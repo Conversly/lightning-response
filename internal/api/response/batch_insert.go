@@ -17,6 +17,7 @@ type MessageRecord struct {
 	Message        string
 	Role           string // user | assistant
 	Citations      []string
+	MessageUID     string
 }
 
 type messageSaver struct {
@@ -128,6 +129,7 @@ func SaveConversationMessagesBackground(ctx context.Context, db *loaders.Postgre
 			Content:      r.Message,
 			CreatedAt:    time.Now().UTC(),
 			UniqueConvID: r.UniqueClientID,
+			UniqueMsgID:  r.MessageUID,
 		}
 
 		select {

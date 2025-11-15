@@ -138,6 +138,19 @@ func BuildChatbotGraph(ctx context.Context, cfg *ChatbotConfig, deps *GraphDepen
 		compose.WithStatePostHandler(func(ctx context.Context, output *schema.Message, state *GraphState) (*schema.Message, error) {
 			// Store assistant message in state
 			state.Messages = append(state.Messages, output)
+
+			// If this is the final assistant message (no tool calls) and we have citations, append them
+			if output != nil && output.Role == schema.Assistant && len(output.ToolCalls) == 0 && len(state.Citations) > 0 {
+				citationsJSON, err := json.Marshal(state.Citations)
+				if err == nil {
+					// Append structured citations suffix
+					output.Content = output.Content + "\n<<<CITATIONS>>>" + string(citationsJSON) + "<<<END>>>"
+					utils.Zlog.Debug("Appended citations to final message",
+						zap.String("chatbot_id", cfg.ChatbotID),
+						zap.Int("citations", len(state.Citations)))
+				}
+			}
+
 			return output, nil
 		}),
 	)
@@ -170,17 +183,37 @@ func BuildChatbotGraph(ctx context.Context, cfg *ChatbotConfig, deps *GraphDepen
 				// Extract citations from RAG tool responses
 				for _, msg := range output {
 					if msg.ToolCallID != "" {
+						utils.Zlog.Debug("Processing tool response message",
+							zap.String("chatbot_id", cfg.ChatbotID),
+							zap.String("tool_call_id", msg.ToolCallID),
+							zap.String("content_preview", func() string {
+								if len(msg.Content) > 200 {
+									return msg.Content[:200]
+								}
+								return msg.Content
+							}()))
+
 						// Parse RAG tool output for citations
 						var ragOutput struct {
 							Citations []string `json:"citations"`
 						}
 						if err := json.Unmarshal([]byte(msg.Content), &ragOutput); err == nil {
+							utils.Zlog.Debug("Successfully parsed RAG tool output",
+								zap.String("chatbot_id", cfg.ChatbotID),
+								zap.Int("citations_found", len(ragOutput.Citations)),
+								zap.Strings("citations", ragOutput.Citations))
+
 							if len(ragOutput.Citations) > 0 {
 								state.Citations = append(state.Citations, ragOutput.Citations...)
 								utils.Zlog.Debug("Captured citations from RAG tool",
 									zap.String("chatbot_id", cfg.ChatbotID),
-									zap.Int("citations", len(ragOutput.Citations)))
+									zap.Int("total_citations", len(state.Citations)))
 							}
+						} else {
+							utils.Zlog.Debug("Failed to parse RAG tool output as JSON",
+								zap.String("chatbot_id", cfg.ChatbotID),
+								zap.Error(err),
+								zap.String("content", msg.Content))
 						}
 					}
 				}

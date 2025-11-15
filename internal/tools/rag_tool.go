@@ -103,9 +103,30 @@ func (r *RAGTool) InvokableRun(ctx context.Context, argumentsInJSON string, opts
 		content := fmt.Sprintf("[%d] %s", i+1, res.Text)
 		output.Results = append(output.Results, content)
 
+		// Debug log each result
+		utils.Zlog.Debug("Processing RAG result",
+			zap.String("chatbot_id", r.chatbotID),
+			zap.Int("index", i),
+			zap.String("text_preview", func() string {
+				if len(content) > 100 {
+					return content[:100]
+				}
+				return content
+			}()),
+			zap.Bool("has_citation", res.Citation != nil),
+			zap.String("citation", func() string {
+				if res.Citation != nil {
+					return *res.Citation
+				}
+				return "nil"
+			}()))
+
 		// Add citation if available
 		if res.Citation != nil && *res.Citation != "" {
 			output.Citations = append(output.Citations, *res.Citation)
+			utils.Zlog.Debug("Added citation to output",
+				zap.String("chatbot_id", r.chatbotID),
+				zap.String("citation", *res.Citation))
 		}
 	}
 

@@ -60,13 +60,13 @@ func (s *GraphService) BuildAndRunGraph(ctx context.Context, req *Request) (*Res
 		return errorResponse(fmt.Errorf("chatbot validation failed: %w", err))
 	}
 
-	info, err := s.db.GetChatbotInfo(ctx, chatbotID)
+	info, err := s.db.GetChatbotInfoWithTopics(ctx, chatbotID)
 	if err != nil {
 		return errorResponse(fmt.Errorf("failed to load chatbot config: %w", err))
 	}
 
 	cfg := &ChatbotConfig{
-		ChatbotID:     fmt.Sprintf("%d", info.ID),
+		ChatbotID:     info.ID,
 		SystemPrompt:  info.SystemPrompt,
 		Temperature:   0.7,
 		Model:         "gemini-2.0-flash-lite",
@@ -209,12 +209,12 @@ func (s *GraphService) BuildAndRunPlaygroundGraph(ctx context.Context, req *Play
 	startTime := time.Now()
 
 	utils.Zlog.Info("Processing playground request with graph",
-		zap.Int("chatbot_id", req.Chatbot.ChatbotId),
+		zap.String("chatbot_id", req.Chatbot.ChatbotId),
 		zap.String("client_id", req.User.UniqueClientID))
 
 	// Use playground chatbot configuration directly (no validation or DB fetch)
 	cfg := &ChatbotConfig{
-		ChatbotID:     fmt.Sprintf("%d", req.Chatbot.ChatbotId),
+		ChatbotID:     req.Chatbot.ChatbotId,
 		SystemPrompt:  req.Chatbot.ChatbotSystemPrompt,
 		Temperature:   float32(req.Chatbot.ChatbotTemperature),
 		Model:         req.Chatbot.ChatbotModel,

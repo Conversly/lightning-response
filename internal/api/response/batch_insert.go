@@ -13,7 +13,7 @@ import (
 
 type MessageRecord struct {
 	UniqueClientID string
-	ChatbotID      int
+	ChatbotID      string
 	Message        string
 	Role           string // user | assistant
 	Citations      []string
@@ -122,6 +122,13 @@ func SaveConversationMessagesBackground(ctx context.Context, db *loaders.Postgre
 		if citations == nil {
 			citations = []string{}
 		}
+
+		// Determine topic ID for user messages
+		topicID := ""
+		if strings.ToLower(r.Role) == "user" {
+			topicID = determineTopicID(ctx, db, r.ChatbotID, r.Message)
+		}
+
 		row := loaders.MessageRow{
 			ChatbotID:    r.ChatbotID,
 			Citations:    citations,
@@ -130,6 +137,7 @@ func SaveConversationMessagesBackground(ctx context.Context, db *loaders.Postgre
 			CreatedAt:    time.Now().UTC(),
 			UniqueConvID: r.UniqueClientID,
 			UniqueMsgID:  r.MessageUID,
+			TopicID:      topicID,
 		}
 
 		select {
@@ -145,4 +153,34 @@ func SaveConversationMessagesBackground(ctx context.Context, db *loaders.Postgre
 		}
 	}
 	return nil
+}
+
+// determineTopicID extracts keywords from message and matches to chatbot topics
+func determineTopicID(ctx context.Context, db *loaders.PostgresClient, chatbotID string, message string) string {
+	// Fetch chatbot topics
+	info, err := db.GetChatbotInfoWithTopics(ctx, chatbotID)
+	if err != nil {
+		utils.Zlog.Debug("Failed to fetch chatbot topics for topic tagging",
+			zap.String("chatbot_id", chatbotID),
+			zap.Error(err))
+		return ""
+	}
+
+	// If no topics configured, return empty string
+	if len(info.Topics) == 0 {
+		return ""
+	}
+
+	// Extract keywords from message
+	keywords := utils.ExtractKeywords(message, 4)
+
+	// Match keywords to topics (will use "other" topic as fallback)
+	topicID := utils.MatchTopicFromKeywords(keywords, info.Topics)
+
+	utils.Zlog.Debug("Message tagged with topic",
+		zap.String("chatbot_id", chatbotID),
+		zap.Strings("keywords", keywords),
+		zap.String("topic_id", topicID))
+
+	return topicID
 }

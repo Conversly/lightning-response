@@ -13,7 +13,7 @@ import (
 
 type ApiKeyManager struct {
 	mu        sync.RWMutex
-	apiKeyMap map[string]map[int][]string
+	apiKeyMap map[string]map[string][]string
 	domainMap map[string]DomainInfo
 
 	// controls background refresh lifecycle
@@ -22,7 +22,7 @@ type ApiKeyManager struct {
 
 type DomainInfo struct {
 	APIKey    string
-	ChatbotID int
+	ChatbotID string
 	UserID    string
 }
 
@@ -35,7 +35,7 @@ var (
 func GetApiKeyManager() *ApiKeyManager {
 	once.Do(func() {
 		apiKeyManager = &ApiKeyManager{
-			apiKeyMap: make(map[string]map[int][]string),
+			apiKeyMap: make(map[string]map[string][]string),
 			domainMap: make(map[string]DomainInfo),
 		}
 	})
@@ -50,14 +50,14 @@ func (akm *ApiKeyManager) LoadFromDatabase(ctx context.Context, pgClient *loader
 	}
 
 	// Build temporary maps
-	tmpApiKeyMap := make(map[string]map[int][]string)
+	tmpApiKeyMap := make(map[string]map[string][]string)
 	tmpDomainMap := make(map[string]DomainInfo)
 	loadedCount := 0
 
 	for _, record := range records {
 		// Populate apiKey -> chatbotID -> []domains map
 		if tmpApiKeyMap[record.APIKey] == nil {
-			tmpApiKeyMap[record.APIKey] = make(map[int][]string)
+			tmpApiKeyMap[record.APIKey] = make(map[string][]string)
 		}
 		tmpApiKeyMap[record.APIKey][record.ChatbotID] = append(tmpApiKeyMap[record.APIKey][record.ChatbotID], record.Domain)
 
@@ -84,7 +84,7 @@ func (akm *ApiKeyManager) LoadFromDatabase(ctx context.Context, pgClient *loader
 }
 
 // ValidateApiKey checks if an API key exists and returns associated chatbot IDs
-func (akm *ApiKeyManager) ValidateApiKey(apiKey string) (map[int][]string, bool) {
+func (akm *ApiKeyManager) ValidateApiKey(apiKey string) (map[string][]string, bool) {
 	akm.mu.RLock()
 	defer akm.mu.RUnlock()
 
@@ -120,7 +120,7 @@ func (akm *ApiKeyManager) ValidateApiKeyAndDomain(apiKey string, domain string) 
 	return false
 }
 
-func (akm *ApiKeyManager) GetChatbotsForApiKey(apiKey string) ([]int, bool) {
+func (akm *ApiKeyManager) GetChatbotsForApiKey(apiKey string) ([]string, bool) {
 	akm.mu.RLock()
 	defer akm.mu.RUnlock()
 
@@ -129,7 +129,7 @@ func (akm *ApiKeyManager) GetChatbotsForApiKey(apiKey string) ([]int, bool) {
 		return nil, false
 	}
 
-	chatbotIDs := make([]int, 0, len(chatbots))
+	chatbotIDs := make([]string, 0, len(chatbots))
 	for id := range chatbots {
 		chatbotIDs = append(chatbotIDs, id)
 	}
@@ -174,7 +174,7 @@ func (akm *ApiKeyManager) DebugInfo() {
 		}
 		log.Printf("  API Key %s: %d chatbots", maskedKey, len(chatbots))
 		for chatbotID, domains := range chatbots {
-			log.Printf("    Chatbot %d: %d domains", chatbotID, len(domains))
+			log.Printf("    Chatbot %s: %d domains", chatbotID, len(domains))
 		}
 		count++
 	}

@@ -12,7 +12,7 @@ package response
 // ]
 
 type PlaygroundChatbot struct {
-	ChatbotId           int     `json:"chatbotId"`
+	ChatbotId           string  `json:"chatbotId"`
 	ChatbotSystemPrompt string  `json:"chatbotSystemPrompt"`
 	ChatbotModel        string  `json:"chatbotModel"`
 	ChatbotTemperature  float64 `json:"chatbotTemperature"`
@@ -22,7 +22,7 @@ type PlaygroundRequest struct {
 	Query     string            `json:"query"`
 	Mode      string            `json:"mode"` // default | thinking | deep thinking
 	Chatbot   PlaygroundChatbot `json:"chatbot"`
-	ChatbotId int               `json:"chatbotId"`
+	ChatbotId string            `json:"chatbotId"`
 	User      RequestUser       `json:"user"`
 }
 
@@ -31,7 +31,7 @@ type Request struct {
 	Mode      string      `json:"mode"` // default | thinking | deep thinking
 	User      RequestUser `json:"user"`
 	Metadata  RequestMeta `json:"metadata"`
-	ChatbotID int         `json:"chatbotId"`
+	ChatbotID string      `json:"chatbotId"`
 }
 
 type RequestUser struct {

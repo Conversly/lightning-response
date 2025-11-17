@@ -50,7 +50,7 @@ func ParseConversationMessages(queryJSON string) ([]*schema.Message, error) {
 	return messages, nil
 }
 
-func ValidateChatbotAccess(ctx context.Context, converslyWebID string, originURL string) (int, error) {
+func ValidateChatbotAccess(ctx context.Context, converslyWebID string, originURL string) (string, error) {
 	domain := extractHost(originURL)
 
 	// Special handling for localhost
@@ -58,18 +58,18 @@ func ValidateChatbotAccess(ctx context.Context, converslyWebID string, originURL
 		// For localhost, just validate the API key exists
 		chatbots, exists := utils.GetApiKeyManager().ValidateApiKey(converslyWebID)
 		if !exists {
-			return 0, fmt.Errorf("invalid api key for localhost domain")
+			return "", fmt.Errorf("invalid api key for localhost domain")
 		}
 		// Return the first chatbot ID associated with this API key
 		for chatbotID := range chatbots {
 			return chatbotID, nil
 		}
-		return 0, fmt.Errorf("no chatbot found for api key")
+		return "", fmt.Errorf("no chatbot found for api key")
 	}
 
 	domainInfo, exists := utils.GetApiKeyManager().ValidateDomain(domain)
 	if !exists || domainInfo.APIKey != converslyWebID {
-		return 0, fmt.Errorf("invalid api key and origin mapping for domain=%s", domain)
+		return "", fmt.Errorf("invalid api key and origin mapping for domain=%s", domain)
 	}
 	return domainInfo.ChatbotID, nil
 }

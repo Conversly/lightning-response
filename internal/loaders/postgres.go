@@ -9,6 +9,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pgvector/pgvector-go"
 	pgxvec "github.com/pgvector/pgvector-go/pgx"
+
+	"github.com/Conversly/lightning-response/internal/types"
 )
 
 type PostgresClient struct {
@@ -18,16 +20,16 @@ type PostgresClient struct {
 
 // OriginDomainRecord represents a single row from the origin_domains table
 type OriginDomainRecord struct {
-	ID        int
+	ID        string
 	UserID    string
-	ChatbotID int
+	ChatbotID string
 	APIKey    string
 	Domain    string
 }
 
 // ChatbotInfo represents chatbot information
 type ChatbotInfo struct {
-	ID           int
+	ID           string
 	Name         string
 	Description  string
 	SystemPrompt string
@@ -138,12 +140,13 @@ func formatTimeForDB(t time.Time) string {
 
 type MessageRow struct {
 	UniqueMsgID  string
-	ChatbotID    int
+	ChatbotID    string
 	Citations    []string
 	Type         string
 	Content      string
 	CreatedAt    time.Time
 	UniqueConvID string
+	TopicID      string
 }
 
 // BatchInsertMessages inserts a batch of messages into the messages table
@@ -154,12 +157,20 @@ func (c *PostgresClient) BatchInsertMessages(ctx context.Context, rows []Message
 
 	query := `
         INSERT INTO messages (
-            id, chatbot_id, citations, "type", content, created_at, unique_conv_id
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+            id, chatbot_id, citations, "type", content, created_at, unique_conv_id, topic_id
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
     `
 
 	successCount := 0
 	for _, r := range rows {
+		// Convert empty topic_id to NULL for database insertion
+		var topicID interface{}
+		if r.TopicID == "" {
+			topicID = nil
+		} else {
+			topicID = r.TopicID
+		}
+
 		_, err := c.pool.Exec(ctx, query,
 			r.UniqueMsgID,
 			r.ChatbotID,
@@ -168,9 +179,10 @@ func (c *PostgresClient) BatchInsertMessages(ctx context.Context, rows []Message
 			r.Content,
 			r.CreatedAt.UTC(),
 			r.UniqueConvID,
+			topicID,
 		)
 		if err != nil {
-			log.Printf("Failed to insert message for conv=%s chatbot_id=%d: %v", r.UniqueConvID, r.ChatbotID, err)
+			log.Printf("Failed to insert message for conv=%s chatbot_id=%s: %v", r.UniqueConvID, r.ChatbotID, err)
 			continue
 		}
 		successCount++
@@ -183,7 +195,7 @@ func (c *PostgresClient) BatchInsertMessages(ctx context.Context, rows []Message
 	return nil
 }
 
-func (c *PostgresClient) UpdateMessageFeedback(ctx context.Context, chatbotID int, uniqueMsgID string, feedback int16, comment *string) error {
+func (c *PostgresClient) UpdateMessageFeedback(ctx context.Context, chatbotID string, uniqueMsgID string, feedback int16, comment *string) error {
 	if uniqueMsgID == "" {
 		return fmt.Errorf("unique message id is required")
 	}
@@ -305,27 +317,86 @@ func (c *PostgresClient) LoadOriginDomains(ctx context.Context) ([]OriginDomainR
 	return records, nil
 }
 
-// GetChatbotInfo retrieves chatbot information by chatbot ID
-func (c *PostgresClient) GetChatbotInfo(ctx context.Context, chatbotID int) (*ChatbotInfo, error) {
+func (c *PostgresClient) GetChatbotInfoWithTopics(ctx context.Context, chatbotID string) (*types.ChatbotInfo, error) {
 	query := `
-		SELECT id, name, description, system_prompt
-		FROM chatbot
-		WHERE id = $1
-	`
+        SELECT 
+            c.id AS chatbot_id,
+            c.name,
+            c.description,
+            c.system_prompt,
+            t.id AS topic_id,
+            t.name AS topic_name,
+            t.color AS topic_color,
+            t.created_at AS topic_created_at
+        FROM chatbot c
+        LEFT JOIN chatbot_topics t 
+            ON c.id = t.chatbot_id
+        WHERE c.id = $1
+    `
 
-	var info ChatbotInfo
-	err := c.pool.QueryRow(ctx, query, chatbotID).Scan(
-		&info.ID,
-		&info.Name,
-		&info.Description,
-		&info.SystemPrompt,
-	)
+	rows, err := c.pool.Query(ctx, query, chatbotID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get chatbot info for id=%d: %w", chatbotID, err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	var info *types.ChatbotInfo
+	topics := []types.ChatbotTopic{}
+
+	for rows.Next() {
+		var (
+			cID          string
+			name         string
+			description  string
+			systemPrompt string
+			topicID      *string
+			topicName    *string
+			topicColor   *string
+			topicCreated *time.Time
+		)
+
+		if err := rows.Scan(
+			&cID,
+			&name,
+			&description,
+			&systemPrompt,
+			&topicID,
+			&topicName,
+			&topicColor,
+			&topicCreated,
+		); err != nil {
+			return nil, err
+		}
+
+		// Initialize info only once
+		if info == nil {
+			info = &types.ChatbotInfo{
+				ID:           cID,
+				Name:         name,
+				Description:  description,
+				SystemPrompt: systemPrompt,
+				Topics:       []types.ChatbotTopic{},
+			}
+		}
+
+		// If topic exists (LEFT JOIN may give NULL)
+		if topicID != nil {
+			topics = append(topics, types.ChatbotTopic{
+				ID:        *topicID,
+				Name:      *topicName,
+				Color:     *topicColor,
+				CreatedAt: *topicCreated,
+			})
+		}
 	}
 
-	log.Printf("Retrieved chatbot info for id=%d, name=%s", info.ID, info.Name)
-	return &info, nil
+	if info == nil {
+		return nil, fmt.Errorf("chatbot not found")
+	}
+
+	info.Topics = topics
+
+	return info, nil
 }
 
 // SearchEmbeddings searches for similar embeddings using vector similarity

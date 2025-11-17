@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Conversly/lightning-response/internal/types"
 	"github.com/Conversly/lightning-response/internal/utils"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -39,7 +40,7 @@ func (c *Controller) Submit(ctx *gin.Context) {
 		return
 	}
 
-	res := Response{Success: true}
+	res := Response{BaseResponse: types.BaseResponse{Success: true}}
 	if idVal, exists := ctx.Get("request_id"); exists {
 		if rid, ok := idVal.(string); ok {
 			res.RequestID = rid

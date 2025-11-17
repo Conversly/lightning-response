@@ -16,6 +16,7 @@ import (
 	"github.com/Conversly/lightning-response/internal/embedder"
 	"github.com/Conversly/lightning-response/internal/loaders"
 	"github.com/Conversly/lightning-response/internal/rag"
+	"github.com/Conversly/lightning-response/internal/types"
 	"github.com/Conversly/lightning-response/internal/utils"
 )
 
@@ -42,9 +43,9 @@ func (s *GraphService) Initialize(ctx context.Context) error {
 // errorResponse creates a failed Response with the given error
 func errorResponse(err error) (*Response, error) {
 	return &Response{
-		Response:  "",
-		Citations: []string{},
-		Success:   false,
+		Response:     "",
+		BaseResponse: types.BaseResponse{Success: false},
+		Citations:    []string{},
 	}, err
 }
 
@@ -101,10 +102,10 @@ func (s *GraphService) BuildAndRunGraph(ctx context.Context, req *Request) (*Res
 	}
 	assistantMsgID := assistantUUID.String()
 	response := &Response{
-		Response:  result.Content,
-		Citations: citations,
-		Success:   true,
-		MessageID: assistantMsgID,
+		Response:     result.Content,
+		Citations:    citations,
+		BaseResponse: types.BaseResponse{Success: true},
+		MessageID:    assistantMsgID,
 	}
 
 	// Step 7: Save messages in background (non-blocking)
@@ -260,10 +261,10 @@ func (s *GraphService) BuildAndRunPlaygroundGraph(ctx context.Context, req *Play
 	}
 	assistantMsgID := assistantUUID.String()
 	response := &Response{
-		Response:  result.Content,
-		Citations: citations,
-		Success:   true,
-		MessageID: assistantMsgID,
+		Response:     result.Content,
+		Citations:    citations,
+		BaseResponse: types.BaseResponse{Success: true},
+		MessageID:    assistantMsgID,
 	}
 
 	// Save messages in background (non-blocking)

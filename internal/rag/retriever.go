@@ -8,7 +8,8 @@ import (
 	"github.com/Conversly/lightning-response/internal/loaders"
 )
 
-type Config struct {
+// RetrieverConfig holds configuration for RAG retrievers (e.g., chatbot ID and TopK).
+type RetrieverConfig struct {
 	ChatbotID string
 	TopK      int
 }

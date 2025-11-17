@@ -1,5 +1,7 @@
 package response
 
+import "github.com/Conversly/lightning-response/internal/types"
+
 // Request defines the input contract for the /response endpoint
 // Mirrors the architecture doc fields and allows future-safe extension via Metadata
 // query contains the whole JSON array of previous conversation as a string
@@ -23,35 +25,24 @@ type PlaygroundRequest struct {
 	Mode      string            `json:"mode"` // default | thinking | deep thinking
 	Chatbot   PlaygroundChatbot `json:"chatbot"`
 	ChatbotId string            `json:"chatbotId"`
-	User      RequestUser       `json:"user"`
+	User      types.RequestUser `json:"user"`
 }
 
 type Request struct {
-	Query     string      `json:"query"`
-	Mode      string      `json:"mode"` // default | thinking | deep thinking
-	User      RequestUser `json:"user"`
-	Metadata  RequestMeta `json:"metadata"`
-	ChatbotID string      `json:"chatbotId"`
-}
-
-type RequestUser struct {
-	UniqueClientID string                 `json:"uniqueClientId"`
-	ConverslyWebID string                 `json:"converslyWebId"`
-	Metadata       map[string]interface{} `json:"metadata,omitempty"`
-}
-
-type RequestMeta struct {
-	OriginURL string `json:"originUrl"`
+	Query     string            `json:"query"`
+	Mode      string            `json:"mode"` // default | thinking | deep thinking
+	User      types.RequestUser `json:"user"`
+	Metadata  types.RequestMeta `json:"metadata"`
+	ChatbotID string            `json:"chatbotId"`
 }
 
 // Response defines a minimal structured response payload
 // This matches the format specified in docs/new_flow.md
 type Response struct {
-	RequestID string   `json:"request_id,omitempty"`
+	types.BaseResponse
 	MessageID string   `json:"message_id,omitempty"`
 	Response  string   `json:"response"`
 	Citations []string `json:"citations"`
-	Success   bool     `json:"success"`
 }
 
 type Source struct {

@@ -27,8 +27,8 @@ type OriginDomainRecord struct {
 	Domain    string
 }
 
-// ChatbotInfo represents chatbot information
-type ChatbotInfo struct {
+// ChatbotRecord represents a chatbot row in the database.
+type ChatbotRecord struct {
 	ID           string
 	Name         string
 	Description  string

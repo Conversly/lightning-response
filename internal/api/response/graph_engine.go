@@ -30,7 +30,7 @@ type ChatbotConfig struct {
 	ChatbotID     string
 	SystemPrompt  string
 	Temperature   float32  // Changed to float32 for Gemini compatibility
-	Model         string   // e.g., "gemini-2.0-flash-exp"
+	Model         string   // e.g., "gemini-2.0-flash-lite"
 	MaxTokens     int      // Maximum tokens in response
 	TopK          int32    // Gemini-specific: controls diversity (1-40)
 	ToolConfigs   []string // e.g., ["rag"] more tools can be added

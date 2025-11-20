@@ -20,37 +20,6 @@ import (
 	"github.com/Conversly/lightning-response/internal/utils"
 )
 
-// func CORSMiddleware() gin.HandlerFunc {
-// 	// List of allowed origins
-// 	allowedOrigins := []string{
-// 		"http://localhost:3000",
-// 		"http://localhost:5173",
-// 	}
-
-// 	return func(c *gin.Context) {
-// 		origin := c.Request.Header.Get("Origin")
-
-// 		// Check if the origin is in the allowed list
-// 		for _, allowedOrigin := range allowedOrigins {
-// 			if origin == allowedOrigin {
-// 				c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
-// 				break
-// 			}
-// 		}
-
-// 		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
-// 		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE, PATCH")
-// 		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, Authorization, accept, origin, Cache-Control")
-
-// 		if c.Request.Method == "OPTIONS" {
-// 			c.AbortWithStatus(204)
-// 			return
-// 		}
-
-// 		c.Next()
-// 	}
-// }
-
 func CORSMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Reflect the request's Origin to allow all origins with credentials
@@ -129,7 +98,7 @@ func main() {
 	routes.SetupRoutes(router, db, cfg)
 
 	srv := &http.Server{
-		Addr:         ":" + cfg.ServerPort,
+		Addr:         "0.0.0.0:" + cfg.Port,
 		Handler:      router,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,

@@ -41,6 +41,31 @@ func GetEnabledTools(ctx context.Context, cfg *ChatbotConfig, deps *GraphDepende
 		}
 	}
 
+	// Load custom actions from chatbot configuration
+	if len(cfg.CustomActions) > 0 {
+		internalUtils.Zlog.Info("Loading custom actions",
+			zap.String("chatbot_id", cfg.ChatbotID),
+			zap.Int("action_count", len(cfg.CustomActions)))
+
+		for _, action := range cfg.CustomActions {
+			// Create custom action tool
+			actionTool, err := tools.NewCustomActionTool(&action)
+			if err != nil {
+				internalUtils.Zlog.Error("Failed to create custom action tool",
+					zap.String("chatbot_id", cfg.ChatbotID),
+					zap.String("action_name", action.Name),
+					zap.Error(err))
+				continue
+			}
+
+			enabledTools = append(enabledTools, actionTool)
+			internalUtils.Zlog.Info("Registered custom action tool",
+				zap.String("chatbot_id", cfg.ChatbotID),
+				zap.String("action_name", action.Name),
+				zap.String("action_display_name", action.DisplayName))
+		}
+	}
+
 	internalUtils.Zlog.Info("Enabled tools for chatbot",
 		zap.String("chatbot_id", cfg.ChatbotID),
 		zap.Int("tool_count", len(enabledTools)))

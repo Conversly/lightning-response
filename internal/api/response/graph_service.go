@@ -75,6 +75,7 @@ func (s *GraphService) BuildAndRunGraph(ctx context.Context, req *Request) (*Res
 		TopK:          5,
 		ToolConfigs:   []string{"rag"},
 		GeminiAPIKeys: s.cfg.GeminiAPIKeys,
+		CustomActions: info.CustomActions, // Pass custom actions from loaded chatbot info
 	}
 
 	deps := &GraphDependencies{
@@ -213,6 +214,15 @@ func (s *GraphService) BuildAndRunPlaygroundGraph(ctx context.Context, req *Play
 		zap.String("chatbot_id", req.Chatbot.ChatbotId),
 		zap.String("client_id", req.User.UniqueClientID))
 
+	// Load custom actions for playground chatbot
+	customActions, err := s.db.GetCustomActionsByChatbot(ctx, req.Chatbot.ChatbotId)
+	if err != nil {
+		utils.Zlog.Warn("Failed to load custom actions for playground chatbot",
+			zap.String("chatbot_id", req.Chatbot.ChatbotId),
+			zap.Error(err))
+		customActions = []types.CustomAction{} // Continue without custom actions
+	}
+
 	// Use playground chatbot configuration directly (no validation or DB fetch)
 	cfg := &ChatbotConfig{
 		ChatbotID:     req.Chatbot.ChatbotId,
@@ -223,6 +233,7 @@ func (s *GraphService) BuildAndRunPlaygroundGraph(ctx context.Context, req *Play
 		TopK:          5,
 		ToolConfigs:   []string{"rag"},
 		GeminiAPIKeys: s.cfg.GeminiAPIKeys,
+		CustomActions: customActions, // Include custom actions in playground
 	}
 
 	// Set default model if not provided

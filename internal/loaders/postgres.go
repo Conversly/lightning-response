@@ -2,6 +2,7 @@ package loaders
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"time"
@@ -396,6 +397,16 @@ func (c *PostgresClient) GetChatbotInfoWithTopics(ctx context.Context, chatbotID
 
 	info.Topics = topics
 
+	// Load enabled custom actions for this chatbot
+	customActions, err := c.GetCustomActionsByChatbot(ctx, chatbotID)
+	if err != nil {
+		// Log error but don't fail the request - chatbot can work without custom actions
+		log.Printf("Warning: Failed to load custom actions for chatbot %s: %v", chatbotID, err)
+		info.CustomActions = []types.CustomAction{}
+	} else {
+		info.CustomActions = customActions
+	}
+
 	return info, nil
 }
 
@@ -441,4 +452,88 @@ func (c *PostgresClient) SearchEmbeddings(ctx context.Context, chatbotID string,
 
 	log.Printf("Retrieved %d embeddings for chatbot_id=%s", len(results), chatbotID)
 	return results, nil
+}
+
+// GetCustomActionsByChatbot retrieves all enabled custom actions for a chatbot
+func (c *PostgresClient) GetCustomActionsByChatbot(ctx context.Context, chatbotID string) ([]types.CustomAction, error) {
+	query := `
+		SELECT 
+			id,
+			chatbot_id,
+			name,
+			display_name,
+			description,
+			is_enabled,
+			api_config,
+			tool_schema,
+			version,
+			created_at,
+			updated_at,
+			created_by,
+			last_tested_at,
+			test_status,
+			test_result
+		FROM custom_actions
+		WHERE chatbot_id = $1 AND is_enabled = true
+		ORDER BY name
+	`
+
+	rows, err := c.pool.Query(ctx, query, chatbotID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query custom actions: %w", err)
+	}
+	defer rows.Close()
+
+	var actions []types.CustomAction
+	for rows.Next() {
+		var action types.CustomAction
+		var apiConfigJSON []byte
+		var toolSchemaJSON []byte
+		var testResultJSON []byte
+
+		if err := rows.Scan(
+			&action.ID,
+			&action.ChatbotID,
+			&action.Name,
+			&action.DisplayName,
+			&action.Description,
+			&action.IsEnabled,
+			&apiConfigJSON,
+			&toolSchemaJSON,
+			&action.Version,
+			&action.CreatedAt,
+			&action.UpdatedAt,
+			&action.CreatedBy,
+			&action.LastTestedAt,
+			&action.TestStatus,
+			&testResultJSON,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan custom action row: %w", err)
+		}
+
+		// Parse api_config JSON
+		if err := json.Unmarshal(apiConfigJSON, &action.APIConfig); err != nil {
+			return nil, fmt.Errorf("failed to parse api_config for action %s: %w", action.Name, err)
+		}
+
+		// Parse tool_schema JSON
+		if err := json.Unmarshal(toolSchemaJSON, &action.ToolSchema); err != nil {
+			return nil, fmt.Errorf("failed to parse tool_schema for action %s: %w", action.Name, err)
+		}
+
+		// Parse test_result JSON if present
+		if len(testResultJSON) > 0 && string(testResultJSON) != "null" {
+			if err := json.Unmarshal(testResultJSON, &action.TestResult); err != nil {
+				log.Printf("Warning: failed to parse test_result for action %s: %v", action.Name, err)
+			}
+		}
+
+		actions = append(actions, action)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating custom actions: %w", err)
+	}
+
+	return actions, nil
 }

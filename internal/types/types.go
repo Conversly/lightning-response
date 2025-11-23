@@ -35,3 +35,25 @@ type BaseResponse struct {
 	RequestID string `json:"request_id,omitempty"`
 	Success   bool   `json:"success"`
 }
+
+// ToolParameter represents a single parameter for a custom action/tool
+type ToolParameter struct {
+	Name        string   `json:"name"`
+	Type        string   `json:"type"`
+	Description string   `json:"description"`
+	Required    bool     `json:"required"`
+	Default     string   `json:"default,omitempty"`
+	Enum        []string `json:"enum,omitempty"`
+}
+
+// CustomAction represents an action loaded from the database
+type CustomAction struct {
+	ID          string                 `json:"id"`
+	Name        string                 `json:"name"`
+	DisplayName string                 `json:"display_name"`
+	Description string                 `json:"description"`
+	IsEnabled   bool                   `json:"is_enabled"`
+	APIConfig   map[string]interface{} `json:"api_config"`
+	ToolSchema  map[string]interface{} `json:"tool_schema"`
+	Parameters  []ToolParameter        `json:"parameters"`
+}

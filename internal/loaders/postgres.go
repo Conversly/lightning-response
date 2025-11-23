@@ -2,6 +2,7 @@ package loaders
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"time"
@@ -397,6 +398,100 @@ func (c *PostgresClient) GetChatbotInfoWithTopics(ctx context.Context, chatbotID
 	info.Topics = topics
 
 	return info, nil
+}
+
+// GetEnabledCustomActions loads enabled custom actions for a chatbot
+func (c *PostgresClient) GetEnabledCustomActions(ctx context.Context, chatbotID string) ([]*types.CustomAction, error) {
+	query := `
+		SELECT id, name, display_name, description, is_enabled, api_config, tool_schema
+		FROM custom_actions
+		WHERE chatbot_id = $1 AND is_enabled = true
+		ORDER BY name
+	`
+
+	rows, err := c.pool.Query(ctx, query, chatbotID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query custom_actions: %w", err)
+	}
+	defer rows.Close()
+
+	actions := make([]*types.CustomAction, 0)
+	for rows.Next() {
+		var (
+			a              types.CustomAction
+			apiConfigJSON  []byte
+			toolSchemaJSON []byte
+		)
+
+		if err := rows.Scan(&a.ID, &a.Name, &a.DisplayName, &a.Description, &a.IsEnabled, &apiConfigJSON, &toolSchemaJSON); err != nil {
+			return nil, err
+		}
+
+		if len(apiConfigJSON) > 0 {
+			var m map[string]interface{}
+			if err := json.Unmarshal(apiConfigJSON, &m); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal api_config for action %s: %w", a.ID, err)
+			}
+			a.APIConfig = m
+		} else {
+			a.APIConfig = map[string]interface{}{}
+		}
+
+		if len(toolSchemaJSON) > 0 {
+			var m map[string]interface{}
+			if err := json.Unmarshal(toolSchemaJSON, &m); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal tool_schema for action %s: %w", a.ID, err)
+			}
+			a.ToolSchema = m
+		} else {
+			a.ToolSchema = map[string]interface{}{}
+		}
+
+		a.Parameters = make([]types.ToolParameter, 0)
+		// attempt to parse properties from tool schema if present
+		if props, ok := a.ToolSchema["properties"].(map[string]interface{}); ok {
+			requiredMap := map[string]bool{}
+			if reqs, ok := a.ToolSchema["required"].([]interface{}); ok {
+				for _, r := range reqs {
+					if s, ok := r.(string); ok {
+						requiredMap[s] = true
+					}
+				}
+			}
+			for name, v := range props {
+				if m, ok := v.(map[string]interface{}); ok {
+					tp := types.ToolParameter{
+						Name: name,
+					}
+					if t, ok := m["type"].(string); ok {
+						tp.Type = t
+					}
+					if d, ok := m["description"].(string); ok {
+						tp.Description = d
+					}
+					if def, ok := m["default"].(string); ok {
+						tp.Default = def
+					}
+					if enumVals, ok := m["enum"].([]interface{}); ok {
+						for _, e := range enumVals {
+							if s, ok := e.(string); ok {
+								tp.Enum = append(tp.Enum, s)
+							}
+						}
+					}
+					if requiredMap[name] {
+						tp.Required = true
+					}
+					a.Parameters = append(a.Parameters, tp)
+				}
+			}
+		}
+
+		a.ID = a.ID
+		actions = append(actions, &a)
+	}
+
+	return actions, nil
 }
 
 // SearchEmbeddings searches for similar embeddings using vector similarity

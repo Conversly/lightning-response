@@ -1,4 +1,4 @@
-package response
+package widget
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// RegisterRoutes registers the /response endpoint at the root level
+// RegisterRoutes registers the widget /response endpoints
 func RegisterRoutes(router *gin.Engine, db *loaders.PostgresClient, cfg *config.Config) {
 	ctx := context.Background()
 	emb, err := embedder.NewGeminiEmbedder(cfg.GeminiAPIKeys)
@@ -19,12 +19,15 @@ func RegisterRoutes(router *gin.Engine, db *loaders.PostgresClient, cfg *config.
 		utils.Zlog.Error("failed to create embedder", zap.Error(err))
 	}
 
-	// Wire service
+	// Create service
 	svc := NewGraphService(db, cfg, emb)
 	_ = svc.Initialize(ctx)
 
-	// Controller
+	// Create controller
 	ctrl := NewController(svc)
+
+	// Register routes
 	router.POST("/response", ctrl.Respond)
 	router.POST("/playground/response", ctrl.PlaygroundResponse)
 }
+

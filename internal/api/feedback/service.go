@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	respapi "github.com/Conversly/lightning-response/internal/api/response"
+	"github.com/Conversly/lightning-response/internal/api/channels/widget"
 	"github.com/Conversly/lightning-response/internal/loaders"
 )
 
@@ -22,7 +22,7 @@ func (s *Service) SubmitFeedback(ctx context.Context, req *Request) error {
 		return fmt.Errorf("nil request")
 	}
 
-	chatbotID, err := respapi.ValidateChatbotAccess(ctx, req.User.ConverslyWebID, req.Metadata.OriginURL)
+	chatbotID, err := widget.ValidateChatbotAccess(ctx, req.User.ConverslyWebID, req.Metadata.OriginURL)
 	if err != nil {
 		return fmt.Errorf("access validation failed: %w", err)
 	}

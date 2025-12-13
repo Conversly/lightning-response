@@ -1,4 +1,4 @@
-package response
+package core
 
 import (
 	"context"
@@ -10,15 +10,6 @@ import (
 	"github.com/Conversly/lightning-response/internal/utils"
 	"go.uber.org/zap"
 )
-
-type MessageRecord struct {
-	UniqueClientID string
-	ChatbotID      string
-	Message        string
-	Role           string // user | assistant
-	Citations      []string
-	MessageUID     string
-}
 
 type messageSaver struct {
 	db            *loaders.PostgresClient
@@ -103,6 +94,7 @@ func (w *messageSaver) run() {
 	}
 }
 
+// StopMessageSaver gracefully stops the message saver
 func StopMessageSaver() {
 	if msgSaver == nil {
 		return
@@ -111,6 +103,7 @@ func StopMessageSaver() {
 	<-msgSaver.stoppedCh
 }
 
+// SaveConversationMessagesBackground saves messages asynchronously via batch insert
 func SaveConversationMessagesBackground(ctx context.Context, db *loaders.PostgresClient, records ...MessageRecord) error {
 	if db == nil {
 		return nil
@@ -129,15 +122,23 @@ func SaveConversationMessagesBackground(ctx context.Context, db *loaders.Postgre
 			topicID = determineTopicID(ctx, db, r.ChatbotID, r.Message)
 		}
 
+		// Default to WIDGET if channel not specified
+		channel := r.Channel
+		if channel == "" {
+			channel = ChannelWidget
+		}
+
 		row := loaders.MessageRow{
-			ChatbotID:    r.ChatbotID,
-			Citations:    citations,
-			Type:         strings.ToLower(r.Role),
-			Content:      r.Message,
-			CreatedAt:    time.Now().UTC(),
-			UniqueConvID: r.UniqueClientID,
-			UniqueMsgID:  r.MessageUID,
-			TopicID:      topicID,
+			ChatbotID:       r.ChatbotID,
+			Citations:       citations,
+			Type:            strings.ToLower(r.Role),
+			Content:         r.Message,
+			CreatedAt:       time.Now().UTC(),
+			UniqueConvID:    r.UniqueClientID,
+			UniqueMsgID:     r.MessageUID,
+			TopicID:         topicID,
+			Channel:         string(channel),
+			ChannelMetadata: r.ChannelMetadata,
 		}
 
 		select {

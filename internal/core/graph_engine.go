@@ -1,4 +1,4 @@
-package response
+package core
 
 import (
 	"context"
@@ -10,40 +10,10 @@ import (
 	"github.com/cloudwego/eino/schema"
 	"go.uber.org/zap"
 
-	"github.com/Conversly/lightning-response/internal/embedder"
 	"github.com/Conversly/lightning-response/internal/llm"
-	"github.com/Conversly/lightning-response/internal/loaders"
-	"github.com/Conversly/lightning-response/internal/types"
+	"github.com/Conversly/lightning-response/internal/tools"
 	"github.com/Conversly/lightning-response/internal/utils"
 )
-
-type GraphState struct {
-	Messages        []*schema.Message      // Conversation history
-	RAGDocs         []*schema.Document     // Retrieved documents
-	KVs             map[string]interface{} // General key-value storage
-	ChatbotID       string                 // Current chatbot context
-	ToolCallCount   int                    // Track tool invocations
-	ConversationKey string                 // Unique conversation identifier
-	Citations       []string               // Collected citations from RAG tool
-}
-
-type ChatbotConfig struct {
-	ChatbotID     string
-	SystemPrompt  string
-	Temperature   float32              // Changed to float32 for Gemini compatibility
-	Model         string               // e.g., "gemini-2.0-flash-lite"
-	MaxTokens     int                  // Maximum tokens in response
-	TopK          int32                // Gemini-specific: controls diversity (1-40)
-	ToolConfigs   []string             // e.g., ["rag"] more tools can be added
-	GeminiAPIKeys []string             // Multiple API keys for rate limit distribution
-	CustomActions []types.CustomAction // Custom actions loaded from database
-}
-
-// GraphDependencies holds dependencies needed for graph building
-type GraphDependencies struct {
-	DB       *loaders.PostgresClient
-	Embedder *embedder.GeminiEmbedder
-}
 
 // BuildChatbotGraph creates a new graph for each request
 func BuildChatbotGraph(ctx context.Context, cfg *ChatbotConfig, deps *GraphDependencies) (compose.Runnable[[]*schema.Message, *schema.Message], error) {
@@ -56,7 +26,7 @@ func BuildChatbotGraph(ctx context.Context, cfg *ChatbotConfig, deps *GraphDepen
 	maxToks := cfg.MaxTokens
 
 	// Get enabled tools for this chatbot
-	enabledTools, err := GetEnabledTools(ctx, cfg, deps)
+	enabledTools, err := tools.GetEnabledTools(ctx, cfg.ChatbotID, cfg.TopK, cfg.CustomActions, deps.DB, deps.Embedder)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get enabled tools: %w", err)
 	}
@@ -126,7 +96,7 @@ func BuildChatbotGraph(ctx context.Context, cfg *ChatbotConfig, deps *GraphDepen
 			// Prepare messages with system prompt at the beginning
 			finalMessages := make([]*schema.Message, 0, len(state.Messages)+1)
 
-			systemPromptContent := promptBuilder(cfg.SystemPrompt)
+			systemPromptContent := PromptBuilder(cfg.SystemPrompt)
 			finalMessages = append(finalMessages, schema.SystemMessage(systemPromptContent))
 
 			// Add all conversation messages
@@ -229,7 +199,6 @@ func BuildChatbotGraph(ctx context.Context, cfg *ChatbotConfig, deps *GraphDepen
 		graph.AddEdge(compose.START, "model")
 
 		// Create a routing branch from model
-		// The condition function receives the output from the model node
 		routeBranch := compose.NewGraphBranch(
 			func(ctx context.Context, msg *schema.Message) (endNode string, err error) {
 				// Check if the message has tool calls
@@ -279,3 +248,4 @@ func BuildChatbotGraph(ctx context.Context, cfg *ChatbotConfig, deps *GraphDepen
 
 	return compiled, nil
 }
+

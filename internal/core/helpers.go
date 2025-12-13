@@ -1,28 +1,18 @@
-package response
+package core
 
 import (
 	"encoding/json"
 	"fmt"
 	"strings"
 
-	"context"
+	"github.com/cloudwego/eino/schema"
 
 	"github.com/Conversly/lightning-response/internal/utils"
-	"github.com/cloudwego/eino/schema"
+	"go.uber.org/zap"
 )
 
-func extractHost(urlStr string) string {
-	if idx := strings.Index(urlStr, "://"); idx != -1 {
-		urlStr = urlStr[idx+3:]
-	}
-	if idx := strings.Index(urlStr, "/"); idx != -1 {
-		urlStr = urlStr[:idx]
-	}
-	return urlStr
-}
-
+// ParseConversationMessages parses a JSON array of conversation messages into schema.Message slice
 func ParseConversationMessages(queryJSON string) ([]*schema.Message, error) {
-	// Parse the JSON array of messages
 	var rawMessages []map[string]interface{}
 	if err := json.Unmarshal([]byte(queryJSON), &rawMessages); err != nil {
 		return nil, fmt.Errorf("failed to parse conversation JSON: %w", err)
@@ -50,30 +40,6 @@ func ParseConversationMessages(queryJSON string) ([]*schema.Message, error) {
 	return messages, nil
 }
 
-func ValidateChatbotAccess(ctx context.Context, converslyWebID string, originURL string) (string, error) {
-	domain := extractHost(originURL)
-
-	// Special handling for localhost
-	if domain == "localhost" || strings.HasPrefix(domain, "localhost:") {
-		// For localhost, just validate the API key exists
-		chatbots, exists := utils.GetApiKeyManager().ValidateApiKey(converslyWebID)
-		if !exists {
-			return "", fmt.Errorf("invalid api key for localhost domain")
-		}
-		// Return the first chatbot ID associated with this API key
-		for chatbotID := range chatbots {
-			return chatbotID, nil
-		}
-		return "", fmt.Errorf("no chatbot found for api key")
-	}
-
-	domainInfo, exists := utils.GetApiKeyManager().ValidateDomain(domain)
-	if !exists || domainInfo.APIKey != converslyWebID {
-		return "", fmt.Errorf("invalid api key and origin mapping for domain=%s", domain)
-	}
-	return domainInfo.ChatbotID, nil
-}
-
 // ExtractLastUserContent returns the content of the last user turn from the raw conversation JSON.
 func ExtractLastUserContent(queryJSON string) string {
 	var rawMessages []map[string]interface{}
@@ -90,10 +56,57 @@ func ExtractLastUserContent(queryJSON string) string {
 	return ""
 }
 
-// promptBuilder composes the final system prompt by embedding the chatbot's
-// specific systemPrompt into a standardized instruction template. The returned
-// string is intended to be used as the content of a system message for the LLM.
-func promptBuilder(systemPrompt string) string {
+// ExtractCitations extracts citation URLs from the message and strips the suffix
+func ExtractCitations(msg *schema.Message) []string {
+	const startTag = "<<<CITATIONS>>>"
+	const endTag = "<<<END>>>"
+
+	content := msg.Content
+	utils.Zlog.Debug("Extracting citations from message",
+		zap.String("content_length", fmt.Sprintf("%d", len(content))),
+		zap.String("content_preview", func() string {
+			if len(content) > 200 {
+				return content[:200]
+			}
+			return content
+		}()))
+
+	start := strings.LastIndex(content, startTag)
+	end := strings.LastIndex(content, endTag)
+
+	utils.Zlog.Debug("Citation tag positions",
+		zap.Int("start_tag_pos", start),
+		zap.Int("end_tag_pos", end))
+
+	if start == -1 || end == -1 || end <= start {
+		utils.Zlog.Debug("No citations found in message - missing or invalid tags")
+		return []string{}
+	}
+
+	jsonPart := content[start+len(startTag) : end]
+	utils.Zlog.Debug("Extracted JSON part for citations",
+		zap.String("json_part", jsonPart))
+
+	var citations []string
+	if err := json.Unmarshal([]byte(jsonPart), &citations); err != nil {
+		utils.Zlog.Error("Failed to parse citations JSON",
+			zap.Error(err),
+			zap.String("json_part", jsonPart))
+		return []string{}
+	}
+
+	utils.Zlog.Debug("Successfully extracted citations",
+		zap.Int("citation_count", len(citations)),
+		zap.Strings("citations", citations))
+
+	// Strip the suffix from the content
+	msg.Content = strings.TrimSpace(content[:start])
+	return citations
+}
+
+// PromptBuilder composes the final system prompt by embedding the chatbot's
+// specific systemPrompt into a standardized instruction template.
+func PromptBuilder(systemPrompt string) string {
 	template := "You are a highly intelligent and user-friendly chatbot embedded on a website to assist users by providing accurate and relevant information. Your goal is to understand the user's query, search the knowledge base when required, and respond in a professional yet approachable tone.\n\n" +
 		"**Guidelines**:\n" +
 		"1. Always provide clear, concise, and well-structured responses in **Markdown** format.\n" +
@@ -142,3 +155,4 @@ func promptBuilder(systemPrompt string) string {
 
 	return fmt.Sprintf(template, strings.TrimSpace(systemPrompt))
 }
+

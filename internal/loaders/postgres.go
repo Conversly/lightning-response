@@ -140,14 +140,16 @@ func formatTimeForDB(t time.Time) string {
 }
 
 type MessageRow struct {
-	UniqueMsgID  string
-	ChatbotID    string
-	Citations    []string
-	Type         string
-	Content      string
-	CreatedAt    time.Time
-	UniqueConvID string
-	TopicID      string
+	UniqueMsgID     string
+	ChatbotID       string
+	Citations       []string
+	Type            string
+	Content         string
+	CreatedAt       time.Time
+	UniqueConvID    string
+	TopicID         string
+	Channel         string                 // WIDGET | WHATSAPP | VOICE
+	ChannelMetadata map[string]interface{} // Optional metadata (whatsapp message ID, etc)
 }
 
 // BatchInsertMessages inserts a batch of messages into the messages table
@@ -158,8 +160,8 @@ func (c *PostgresClient) BatchInsertMessages(ctx context.Context, rows []Message
 
 	query := `
         INSERT INTO messages (
-            id, chatbot_id, citations, "type", content, created_at, unique_conv_id, topic_id
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            id, chatbot_id, citations, "type", content, created_at, unique_conv_id, topic_id, channel, channel_message_metadata
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
     `
 
 	successCount := 0
@@ -172,6 +174,24 @@ func (c *PostgresClient) BatchInsertMessages(ctx context.Context, rows []Message
 			topicID = r.TopicID
 		}
 
+		// Default to WIDGET if channel not specified
+		channel := r.Channel
+		if channel == "" {
+			channel = "WIDGET"
+		}
+
+		// Marshal channel metadata to JSON
+		var metadataJSON interface{}
+		if r.ChannelMetadata != nil {
+			jsonBytes, err := json.Marshal(r.ChannelMetadata)
+			if err != nil {
+				log.Printf("Failed to marshal channel metadata: %v", err)
+				metadataJSON = nil
+			} else {
+				metadataJSON = jsonBytes
+			}
+		}
+
 		_, err := c.pool.Exec(ctx, query,
 			r.UniqueMsgID,
 			r.ChatbotID,
@@ -181,6 +201,8 @@ func (c *PostgresClient) BatchInsertMessages(ctx context.Context, rows []Message
 			r.CreatedAt.UTC(),
 			r.UniqueConvID,
 			topicID,
+			channel,
+			metadataJSON,
 		)
 		if err != nil {
 			log.Printf("Failed to insert message for conv=%s chatbot_id=%s: %v", r.UniqueConvID, r.ChatbotID, err)
@@ -536,4 +558,130 @@ func (c *PostgresClient) GetCustomActionsByChatbot(ctx context.Context, chatbotI
 	}
 
 	return actions, nil
+}
+
+// WhatsAppAccount represents a row from whatsapp_accounts
+type WhatsAppAccount struct {
+	ID                 string
+	ChatbotID          string
+	PhoneNumber        string
+	WabaID             string
+	PhoneNumberID      string
+	AccessToken        string
+	VerifiedName       string
+	Status             string
+	WhatsappBusinessID string
+	VerifyToken        *string
+}
+
+// GetWhatsAppAccountByPhoneNumberID retrieves the WhatsApp account for a phone number ID
+func (c *PostgresClient) GetWhatsAppAccountByPhoneNumberID(ctx context.Context, phoneNumberID string) (*WhatsAppAccount, error) {
+	query := `
+		SELECT id, chatbot_id, phone_number, waba_id, phone_number_id, 
+		       access_token, verified_name, status, whatsapp_business_id, verify_token
+		FROM whatsapp_accounts 
+		WHERE phone_number_id = $1
+		LIMIT 1
+	`
+
+	var acc WhatsAppAccount
+	err := c.pool.QueryRow(ctx, query, phoneNumberID).Scan(
+		&acc.ID, &acc.ChatbotID, &acc.PhoneNumber, &acc.WabaID, &acc.PhoneNumberID,
+		&acc.AccessToken, &acc.VerifiedName, &acc.Status, &acc.WhatsappBusinessID, &acc.VerifyToken,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get WhatsApp account: %w", err)
+	}
+
+	return &acc, nil
+}
+
+// GetWhatsAppAccessToken retrieves the access token for a WhatsApp phone number
+func (c *PostgresClient) GetWhatsAppAccessToken(ctx context.Context, phoneNumberID string) (string, error) {
+	acc, err := c.GetWhatsAppAccountByPhoneNumberID(ctx, phoneNumberID)
+	if err != nil {
+		return "", err
+	}
+	return acc.AccessToken, nil
+}
+
+// WhatsAppContactMetadata represents the user metadata stored in whatsapp_contacts
+type WhatsAppContactMetadata struct {
+	WaID                 string  `json:"wa_id"`
+	ProfileName          string  `json:"profile_name,omitempty"`
+	FirstSeenAt          string  `json:"first_seen_at"`
+	LastSeenAt           string  `json:"last_seen_at"`
+	LastInboundMessageID string  `json:"last_inbound_message_id,omitempty"`
+	WabaID               string  `json:"waba_id,omitempty"`
+	PhoneNumberID        string  `json:"phone_number_id,omitempty"`
+	DisplayPhoneNumber   string  `json:"display_phone_number,omitempty"`
+	Source               string  `json:"source,omitempty"`
+	OptInStatus          *string `json:"opt_in_status,omitempty"`
+}
+
+// UpsertWhatsAppContact creates or updates a WhatsApp contact
+func (c *PostgresClient) UpsertWhatsAppContact(ctx context.Context, chatbotID, phoneNumber, displayName string, metadata *WhatsAppContactMetadata) error {
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		return fmt.Errorf("failed to marshal metadata: %w", err)
+	}
+
+	query := `
+		INSERT INTO whatsapp_contacts (id, chatbot_id, phone_number, display_name, whatsapp_user_metadata, created_at, updated_at)
+		VALUES (gen_random_uuid()::text, $1, $2, $3, $4, NOW(), NOW())
+		ON CONFLICT (chatbot_id, phone_number) 
+		DO UPDATE SET 
+			display_name = COALESCE(EXCLUDED.display_name, whatsapp_contacts.display_name),
+			whatsapp_user_metadata = $4,
+			updated_at = NOW()
+	`
+
+	_, err = c.pool.Exec(ctx, query, chatbotID, phoneNumber, displayName, metadataJSON)
+	if err != nil {
+		return fmt.Errorf("failed to upsert WhatsApp contact: %w", err)
+	}
+
+	return nil
+}
+
+// GetWhatsAppConversationHistory retrieves recent messages for a WhatsApp conversation
+func (c *PostgresClient) GetWhatsAppConversationHistory(ctx context.Context, uniqueConvID, chatbotID string, limit int) ([]map[string]interface{}, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+
+	query := `
+		SELECT type, content, created_at
+		FROM messages
+		WHERE unique_conv_id = $1 AND chatbot_id = $2 AND channel = 'WHATSAPP'
+		ORDER BY created_at DESC
+		LIMIT $3
+	`
+
+	rows, err := c.pool.Query(ctx, query, uniqueConvID, chatbotID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get conversation history: %w", err)
+	}
+	defer rows.Close()
+
+	var messages []map[string]interface{}
+	for rows.Next() {
+		var msgType, content string
+		var createdAt time.Time
+		if err := rows.Scan(&msgType, &content, &createdAt); err != nil {
+			continue
+		}
+		messages = append(messages, map[string]interface{}{
+			"role":       msgType,
+			"content":    content,
+			"created_at": createdAt,
+		})
+	}
+
+	// Reverse to get chronological order
+	for i, j := 0, len(messages)-1; i < j; i, j = i+1, j-1 {
+		messages[i], messages[j] = messages[j], messages[i]
+	}
+
+	return messages, nil
 }

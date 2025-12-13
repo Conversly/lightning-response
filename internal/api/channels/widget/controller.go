@@ -1,4 +1,4 @@
-package response
+package widget
 
 import (
 	"net/http"
@@ -9,14 +9,17 @@ import (
 	"go.uber.org/zap"
 )
 
+// Controller handles widget HTTP requests
 type Controller struct {
 	graphService *GraphService
 }
 
+// NewController creates a new widget controller
 func NewController(gs *GraphService) *Controller {
 	return &Controller{graphService: gs}
 }
 
+// Respond handles the /response endpoint
 func (c *Controller) Respond(ctx *gin.Context) {
 	var req Request
 	if err := ctx.ShouldBindJSON(&req); err != nil {
@@ -29,10 +32,7 @@ func (c *Controller) Respond(ctx *gin.Context) {
 		return
 	}
 
-	var result *Response
-	var err error
-
-	result, err = c.graphService.BuildAndRunGraph(ctx.Request.Context(), &req)
+	result, err := c.graphService.BuildAndRunGraph(ctx.Request.Context(), &req)
 	if err != nil {
 		utils.Zlog.Error("graph execution failed", zap.Error(err))
 		ctx.JSON(http.StatusInternalServerError, gin.H{
@@ -53,6 +53,7 @@ func (c *Controller) Respond(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, result)
 }
 
+// PlaygroundResponse handles the /playground/response endpoint
 func (c *Controller) PlaygroundResponse(ctx *gin.Context) {
 	var req PlaygroundRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
@@ -65,10 +66,7 @@ func (c *Controller) PlaygroundResponse(ctx *gin.Context) {
 		return
 	}
 
-	var result *Response
-	var err error
-
-	result, err = c.graphService.BuildAndRunPlaygroundGraph(ctx.Request.Context(), &req)
+	result, err := c.graphService.BuildAndRunPlaygroundGraph(ctx.Request.Context(), &req)
 	if err != nil {
 		utils.Zlog.Error("playground graph execution failed", zap.Error(err))
 		ctx.JSON(http.StatusInternalServerError, gin.H{
@@ -88,3 +86,4 @@ func (c *Controller) PlaygroundResponse(ctx *gin.Context) {
 
 	ctx.JSON(http.StatusOK, result)
 }
+
